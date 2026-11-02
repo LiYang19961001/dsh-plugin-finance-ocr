@@ -421,6 +421,64 @@ class DetailOnlyTests(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
         self.assertIn("SIGNATURE_MISMATCH", [item["rule"] for item in report["errors"]])
 
+    def test_detail_only_rate_over_office_cap(self):
+        """机关住宿费上限 200 元/天：201 元/天必须报错。"""
+        data = detail_only_dataset()
+        sheet = data["detail_sheets"][0]
+        sheet["rows"][0]["periods"][0]["price"] = "201"
+        sheet["rows"][0]["periods"][0]["amount"] = "804"
+        sheet["subtotal"] = {"nights": 12, "amount": "2092"}
+        sheet["lowercase_amount"] = "2092.00"
+        sheet["capital_amount"] = cn_capital(Decimal("2092"))
+        report = check(data)
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("RATE_OVER_LIMIT", [item["rule"] for item in report["errors"]])
+
+    def test_detail_only_rate_at_office_cap_ok(self):
+        """机关上限 200 元/天：正好 200 元/天允许。"""
+        data = detail_only_dataset()
+        sheet = data["detail_sheets"][0]
+        sheet["rows"][0]["periods"][0]["price"] = "200"
+        sheet["rows"][0]["periods"][0]["amount"] = "800"
+        sheet["subtotal"] = {"nights": 12, "amount": "2088"}
+        sheet["lowercase_amount"] = "2088.00"
+        sheet["capital_amount"] = cn_capital(Decimal("2088"))
+        report = check(data)
+        self.assertEqual(report["status"], "pass", report["errors"])
+
+
+class RateCapTests(unittest.TestCase):
+    def test_workshop_rate_over_cap(self):
+        """车间住宿费上限 130 元/天：131 元/天必须报错。"""
+        data = base_dataset()
+        row = data["detail_sheet"]["rows"][0]
+        row["periods"][0]["price"] = "131"
+        row["periods"][0]["amount"] = "393"
+        data["detail_sheet"]["subtotal"] = {"nights": 7, "amount": "905"}
+        data["detail_sheet"]["lowercase_amount"] = "905.00"
+        data["detail_sheet"]["capital_amount"] = cn_capital(Decimal("905"))
+        data["hotel_statement"]["rows"][0]["price"] = "131"
+        data["hotel_statement"]["rows"][0]["amount"] = "393"
+        data["hotel_statement"]["payment_amounts"] = ["905", "905"]
+        report = check(data)
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("RATE_OVER_LIMIT", [item["rule"] for item in report["errors"]])
+
+    def test_workshop_rate_at_cap_ok(self):
+        """车间上限 130 元/天：正好 130 元/天允许。"""
+        data = base_dataset()
+        row = data["detail_sheet"]["rows"][0]
+        row["periods"][0]["price"] = "130"
+        row["periods"][0]["amount"] = "390"
+        data["detail_sheet"]["subtotal"] = {"nights": 7, "amount": "902"}
+        data["detail_sheet"]["lowercase_amount"] = "902.00"
+        data["detail_sheet"]["capital_amount"] = cn_capital(Decimal("902"))
+        data["hotel_statement"]["rows"][0]["price"] = "130"
+        data["hotel_statement"]["rows"][0]["amount"] = "390"
+        data["hotel_statement"]["payment_amounts"] = ["902", "902"]
+        report = check(data)
+        self.assertEqual(report["status"], "pass", report["errors"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -171,6 +171,8 @@ def check(data: dict) -> dict:
     directors = [str(name).strip() for name in (policy.get("directors") or []) if str(name).strip()]
     rate_expected = policy.get("rate")
     rate_expected = parse_decimal(rate_expected, "预期单价") if rate_expected not in (None, "") else None
+    rate_cap_raw = policy.get("rate_cap_workshop") or policy.get("rate_cap") or "130"
+    rate_cap = parse_decimal(rate_cap_raw, "车间住宿费上限")
 
     # ---------- 规则 3/5：每个日期段的天数、金额；明细合计 ----------
     segments: list[dict] = []
@@ -178,6 +180,7 @@ def check(data: dict) -> dict:
     total_amount = Decimal("0")
     nights_check_failed = False
     amount_check_failed = False
+    rate_limit_failed = False
     for row in rows:
         seq = row.get("seq")
         room = str(row.get("room") or "").strip()
@@ -247,10 +250,18 @@ def check(data: dict) -> dict:
                     seq=seq,
                     room=room,
                 )
+            if price > rate_cap:
+                rate_limit_failed = True
+                err(
+                    "RATE_OVER_LIMIT",
+                    f"序号{seq} 房间{room} 单价 {price} 元/天超过车间住宿费上限 {rate_cap} 元/天",
+                    seq=seq,
+                    room=room,
+                )
             if rate_expected is not None and price != rate_expected:
-                warn(
+                note(
                     "RATE_DIFF",
-                    f"序号{seq} 房间{room} 单价 {price} 与预期 {rate_expected} 不同",
+                    f"序号{seq} 房间{room} 单价 {price} 与常规单价 {rate_expected} 不同（未超上限，仅供参考）",
                     seq=seq,
                     room=room,
                 )
@@ -640,6 +651,7 @@ def check(data: dict) -> dict:
             {"rule": "double_room", "name": "双人间/单住", "status": "fail" if double_room_failed else "pass"},
             {"rule": "duplicate", "name": "同一天房间/人员不重复", "status": "fail" if duplicate_failed else "pass"},
             {"rule": "nights_amount", "name": "天数与金额", "status": "fail" if (nights_check_failed or amount_check_failed) else "pass"},
+            {"rule": "rate_limit", "name": "单价上限", "status": "fail" if rate_limit_failed else "pass"},
             {
                 "rule": "signature",
                 "name": "入住人员=签字",
@@ -693,8 +705,8 @@ def check_detail_only(data: dict) -> dict:
         raise AccommodationError("BAD_INPUT", "detail_sheets 为空，无法核对")
     year = int(data.get("year") or date.today().year)
     policy = data.get("policy") or {}
-    rate_expected_value = policy.get("rate")
-    rate_expected = parse_decimal(rate_expected_value) if rate_expected_value not in (None, "") else None
+    rate_cap_raw = policy.get("rate_cap_office") or policy.get("rate_cap") or "200"
+    rate_cap = parse_decimal(rate_cap_raw, "机关住宿费上限")
     signature_verified = bool(data.get("signature_verified"))
 
     total_nights = 0
@@ -703,6 +715,7 @@ def check_detail_only(data: dict) -> dict:
     per_sheet_totals: list[dict] = []
     prices_used: dict[str, int] = defaultdict(int)
     nights_ok = amounts_ok = subtotals_ok = capitals_ok = signatures_ok = True
+    rate_limit_failed = False
     signature_unverified = False
     person_nights: dict[str, dict[date, str]] = defaultdict(dict)
     duplicate_person = False
@@ -756,6 +769,13 @@ def check_detail_only(data: dict) -> dict:
                     err(
                         "AMOUNT_MISMATCH",
                         f"{label}序号{seq} 金额 {amount} ≠ 天数×单价（{computed_nights}×{price} = {computed_nights * price}）",
+                        seq=seq,
+                    )
+                if price > rate_cap:
+                    rate_limit_failed = True
+                    err(
+                        "RATE_OVER_LIMIT",
+                        f"{label}序号{seq} 单价 {price} 元/天超过机关住宿费上限 {rate_cap} 元/天",
                         seq=seq,
                     )
                 prices_used[str(price)] += computed_nights
@@ -850,14 +870,12 @@ def check_detail_only(data: dict) -> dict:
         )
     elif signature_verified:
         note("SIGNATURE_VERIFIED", "签字为手写体，已人工核对与入住人员一致")
-    if rate_expected is not None:
-        mismatched = [price for price in prices_used if price != str(rate_expected)]
-        if mismatched:
-            note(
-                "RATE_NOTE",
-                f"本批单价与常规标准 {rate_expected} 不同："
-                + "、".join(f"{price} 元/天（{nights} 晚）" for price, nights in sorted(prices_used.items())),
-            )
+    if prices_used and not rate_limit_failed:
+        note(
+            "RATE_WITHIN_LIMIT",
+            f"单价均在机关住宿费上限 {rate_cap} 元/天内："
+            + "、".join(f"{price} 元/天（{nights} 晚）" for price, nights in sorted(prices_used.items())),
+        )
     if len(prices_used) > 1:
         note(
             "RATE_MULTIPLE",
@@ -888,6 +906,7 @@ def check_detail_only(data: dict) -> dict:
             {"rule": "double_room", "name": "双人间/单住", "status": "skip", "detail": "无房间号列，不适用"},
             {"rule": "duplicate", "name": "同一天人员不重复", "status": "fail" if duplicate_person else "pass"},
             {"rule": "nights_amount", "name": "天数与金额", "status": "fail" if (not nights_ok or not amounts_ok) else "pass"},
+            {"rule": "rate_limit", "name": "单价上限", "status": "fail" if rate_limit_failed else "pass"},
             {"rule": "signature", "name": "入住人员=签字", "status": signature_rule},
             {"rule": "subtotal", "name": "小计/合计", "status": "fail" if (not subtotals_ok or not capitals_ok) else "pass"},
             {"rule": "statement", "name": "酒店流水匹配", "status": "skip", "detail": "机关待遇，不核流水"},

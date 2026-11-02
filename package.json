@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-finance-ocr",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "财务图片核对插件：本地离线 OCR 识别发票/报销单/凭证/台账图片，按「明细=合计」等守恒关系硬校验后导出可追溯的 Excel。",
   "type": "module",
   "main": "index.js",
