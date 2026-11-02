@@ -1,0 +1,11 @@
+# dsh-plugin-finance-ocr 的 bundle patch。
+#
+# 只插入一行 Host 插件：注册 finance_ocr_extract / finance_verify / finance_export_xlsx
+# 三个模型可见工具。没有 Client 半，不新增 UI 页面。
+#
+# Python 解释器默认从 %DSH_HOME%\dsh-runtimes\*\dependencies\python 自动发现；
+# 需要指定时在环境变量 DSH_FINANCE_PYTHON 里写 python.exe 的绝对路径。
+- insert:
+    - id: plugin-finance-ocr
+      name: dsh-plugin-finance-ocr
+      config: {}

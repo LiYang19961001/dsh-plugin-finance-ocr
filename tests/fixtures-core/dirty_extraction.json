@@ -1,0 +1,81 @@
+{
+  "schema_version": "finance-extract/1",
+  "plugin_version": "0.1.0",
+  "source": {
+    "path": "",
+    "sha256": "",
+    "bytes": 0,
+    "width": 1600,
+    "height": 1200,
+    "mtime": "2026-11-02T09:00:00+08:00"
+  },
+  "template": "auto",
+  "ocr": {
+    "engine": "rapidocr_onnxruntime",
+    "engine_version": "1.4.4",
+    "n_lines": 22,
+    "mean_confidence": 0.8812
+  },
+  "columns": [
+    { "field": "seq", "header": "序号", "x_min": 40, "x_max": 120, "align": "right" },
+    { "field": "date", "header": "日期", "x_min": 120, "x_max": 300, "align": "center" },
+    { "field": "invoice_no", "header": "发票号码", "x_min": 300, "x_max": 560, "align": "left" },
+    { "field": "summary", "header": "摘要", "x_min": 560, "x_max": 900, "align": "left" },
+    { "field": "amount", "header": "金额", "x_min": 900, "x_max": 1100, "align": "right" }
+  ],
+  "header_line": 1,
+  "rows": [
+    {
+      "row_index": 1,
+      "y_center": 300,
+      "cells": {
+        "seq": { "raw": "1", "value": "1", "confidence": 0.99, "bbox": [40, 288, 118, 312], "line_id": 2 },
+        "date": { "raw": "2026-13-45", "value": "2026-13-45", "confidence": 0.97, "bbox": [130, 288, 290, 312], "line_id": 3 },
+        "invoice_no": { "raw": "00123456", "value": "123456", "confidence": 0.95, "bbox": [310, 288, 550, 312], "line_id": 4 },
+        "summary": { "raw": "办公用品", "value": "办公用品", "confidence": 0.96, "bbox": [570, 288, 880, 312], "line_id": 5 },
+        "amount": { "raw": "￥1,200.00", "value": "1200.00", "confidence": 0.95, "bbox": [910, 288, 1080, 312], "line_id": 6 }
+      }
+    },
+    {
+      "row_index": 2,
+      "y_center": 420,
+      "cells": {
+        "seq": { "raw": "2", "value": "2", "confidence": 0.98, "bbox": [40, 408, 118, 432], "line_id": 7 },
+        "date": { "raw": "2026-11-03", "value": "2026-11-03", "confidence": 0.97, "bbox": [130, 408, 290, 432], "line_id": 8 },
+        "invoice_no": { "raw": "00123457", "value": "00123457", "confidence": 0.96, "bbox": [310, 408, 550, 432], "line_id": 9 },
+        "summary": { "raw": "", "value": "", "confidence": 0.55, "bbox": [570, 408, 880, 432], "line_id": 10 },
+        "amount": { "raw": "800.00", "value": "800.00", "confidence": 0.96, "bbox": [910, 408, 1080, 432], "line_id": 11 }
+      }
+    },
+    {
+      "row_index": 3,
+      "y_center": 540,
+      "cells": {
+        "seq": { "raw": "3", "value": "3", "confidence": 0.99, "bbox": [40, 528, 118, 552], "line_id": 12 },
+        "date": { "raw": "2026-11-04", "value": "2026-11-04", "confidence": 0.97, "bbox": [130, 528, 290, 552], "line_id": 13 },
+        "invoice_no": { "raw": "00123458", "value": "00123458", "confidence": 0.96, "bbox": [310, 528, 550, 552], "line_id": 14 },
+        "summary": { "raw": "差旅费", "value": "差旅费", "confidence": 0.95, "bbox": [570, 528, 880, 552], "line_id": 15 },
+        "amount": { "raw": "1.23E+15", "value": "1.23E+15", "confidence": 0.55, "bbox": [910, 528, 1080, 552], "line_id": 16 }
+      }
+    },
+    {
+      "row_index": 3,
+      "y_center": 660,
+      "cells": {
+        "seq": { "raw": "3", "value": "3", "confidence": 0.98, "bbox": [40, 648, 118, 672], "line_id": 17 },
+        "date": { "raw": "2026-11-04", "value": "2026-11-04", "confidence": 0.97, "bbox": [130, 648, 290, 672], "line_id": 18 },
+        "invoice_no": { "raw": "00123458", "value": "00123458", "confidence": 0.96, "bbox": [310, 648, 550, 672], "line_id": 19 },
+        "summary": { "raw": "差旅费", "value": "差旅费", "confidence": 0.95, "bbox": [570, 648, 880, 672], "line_id": 20 },
+        "amount": { "raw": "1.23E+15", "value": "1.23E+15", "confidence": 0.98, "bbox": [910, 648, 1080, 672], "line_id": 21 }
+      }
+    }
+  ],
+  "total_rows": [],
+  "skipped_lines": [
+    { "text": "XX公司费用报销单", "bbox": [300, 40, 900, 80], "line_id": 0, "reason": "title" },
+    { "text": "序号 日期 发票号码 摘要 金额", "bbox": [40, 120, 1080, 160], "line_id": 1, "reason": "header" }
+  ],
+  "warnings": [
+    { "code": "LOW_CONFIDENCE_CELLS", "message": "3 个单元格置信度低于阈值" }
+  ]
+}

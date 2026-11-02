@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 生成的提取结果 / 测试产物
+*.extract.json
+samples/*.xlsx
+pip-install.log
+
+# 系统
+Thumbs.db
+.DS_Store

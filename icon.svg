@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="财务图片核对">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1c3f6e"/>
+      <stop offset="1" stop-color="#0f2547"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
+  <!-- 单据 -->
+  <path d="M17 12h20l8 8v26a4 4 0 0 1-4 4H21a4 4 0 0 1-4-4V16a4 4 0 0 1 4-4z" fill="#f5f8fc"/>
+  <path d="M37 12v8h8" fill="none" stroke="#9db6d6" stroke-width="2.4" stroke-linejoin="round"/>
+  <g stroke="#5b7ba6" stroke-width="2.4" stroke-linecap="round">
+    <line x1="21" y1="26" x2="34" y2="26"/>
+    <line x1="21" y1="31" x2="38" y2="31"/>
+    <line x1="21" y1="36" x2="30" y2="36"/>
+  </g>
+  <!-- 放大镜 -->
+  <circle cx="39" cy="40" r="8.5" fill="none" stroke="#ffc861" stroke-width="3.2"/>
+  <line x1="45.2" y1="46.2" x2="52" y2="53" stroke="#ffc861" stroke-width="4" stroke-linecap="round"/>
+  <!-- 对勾 -->
+  <path d="M20.5 45.5l4.2 4.2 8.3-9.4" fill="none" stroke="#57d29a" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

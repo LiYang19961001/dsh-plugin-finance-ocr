@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Finance Image OCR",
+    "description": "Local, offline OCR for finance document photos (invoices, reimbursement forms, vouchers, ledger screenshots): extract rows with source coordinates and confidence, hard-check detail-vs-total invariants with Decimal, then export a traceable Excel workbook."
+  }
+}

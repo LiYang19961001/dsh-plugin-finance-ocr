@@ -1,0 +1,58 @@
+{
+  "name": "dsh-plugin-finance-ocr",
+  "version": "0.2.6",
+  "description": "财务图片核对插件：本地离线 OCR 识别发票/报销单/凭证/台账图片，按「明细=合计」等守恒关系硬校验后导出可追溯的 Excel。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "lib/*.py",
+    "lib/CONTRACT.md",
+    "samples/*.png",
+    "REQUIREMENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "finance",
+    "ocr",
+    "invoice",
+    "reimbursement",
+    "excel",
+    "offline"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "LiYang19961001",
+    "url": "https://github.com/LiYang19961001"
+  },
+  "homepage": "https://github.com/LiYang19961001/dsh-plugin-finance-ocr",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LiYang19961001/dsh-plugin-finance-ocr"
+  },
+  "bugs": {
+    "url": "https://github.com/LiYang19961001/dsh-plugin-finance-ocr/issues"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
