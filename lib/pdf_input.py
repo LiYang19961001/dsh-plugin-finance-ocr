@@ -72,9 +72,23 @@ def render_pdf(path, dpi: int = DEFAULT_DPI, root=None) -> list[Path]:
             raise PdfInputError("PDF_ENCRYPTED", f"PDF 已加密，需要先解密：{path}")
         if document.page_count == 0:
             raise PdfInputError("PDF_EMPTY", f"PDF 没有页面：{path}")
-        zoom = float(dpi) / 72.0
-        matrix = pymupdf.Matrix(zoom, zoom)
+        requested_zoom = float(dpi) / 72.0
         for index, page in enumerate(document, start=1):
+            # 纯图片页按"嵌入图原生分辨率"封顶：高于原生分辨率的渲染不会增加信息，只会变慢
+            page_zoom = requested_zoom
+            if not (page.get_text() or "").strip():
+                native_dpi = 0.0
+                page_width_inch = page.rect.width / 72.0
+                if page_width_inch > 0:
+                    for image in page.get_images(full=True):
+                        try:
+                            info = document.extract_image(image[0])
+                        except Exception:
+                            continue
+                        native_dpi = max(native_dpi, float(info.get("width") or 0) / page_width_inch)
+                if native_dpi > 0:
+                    page_zoom = min(requested_zoom, max(1.0, native_dpi * 1.02 / 72.0))
+            matrix = pymupdf.Matrix(page_zoom, page_zoom)
             pixmap = page.get_pixmap(matrix=matrix, alpha=False, colorspace=pymupdf.csRGB)
             pixmap.save(str(pages_dir / f"page-{index:03d}.png"))
     finally:

@@ -56,6 +56,24 @@ class PdfInputTests(unittest.TestCase):
         second = pdf_input.render_pdf(self.pdf, dpi=150, root=self.cache)
         self.assertEqual(first, second)
 
+    def test_image_only_page_capped_to_native_resolution(self):
+        """纯图片页不应被放大到超过嵌入图原生分辨率（只变慢、不增信息）。"""
+        from PIL import Image
+
+        image_path = self.root / "scan.png"
+        Image.new("RGB", (200, 300), (255, 255, 255)).save(image_path)
+        image_pdf = self.root / "image-only.pdf"
+        document = pymupdf.open()
+        try:
+            page = document.new_page(width=595, height=842)  # A4
+            page.insert_image(page.rect, filename=str(image_path))
+            document.save(str(image_pdf))
+        finally:
+            document.close()
+        pages = pdf_input.render_pdf(image_pdf, dpi=250, root=self.cache)
+        width, _ = Image.open(pages[0]).size
+        self.assertLess(width, 1000)  # 250DPI 直接渲染约 2068px；按原生分辨率封顶后明显更小
+
     def test_expand_inputs_mixed_image_pdf(self):
         image = self.root / "one.png"
         image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)  # 占位文件，不做 OCR，只验证展开顺序
