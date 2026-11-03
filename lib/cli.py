@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-PLUGIN_VERSION = "0.2.10"
+PLUGIN_VERSION = "0.2.11"
 SCHEMA_EXTRACT = "finance-extract/1"
 SCHEMA_VERIFY = "finance-verify/1"
 HERE = Path(__file__).resolve().parent

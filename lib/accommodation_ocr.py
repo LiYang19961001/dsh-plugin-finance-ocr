@@ -333,12 +333,14 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                     text = line["text"].strip()
                     if "明细表" in text and title is None:
                         title = text
-                    if "部门" in text and dept_text is None:
+                    if ("部门" in text or re.match(r"^部.{0,2}[:：]", text)) and dept_text is None:
                         dept_text = text
                     elif "单位" in text and unit_text is None:
                         unit_text = text
                 if dept_text:
-                    cleaned = re.sub(r"^.*?部门[:：]?", "", dept_text)
+                    parts = re.split(r"[:：]", dept_text, maxsplit=1)
+                    cleaned = parts[1] if len(parts) > 1 else dept_text
+                    cleaned = re.sub(r"^.*?部门?", "", cleaned)
                     cleaned = re.sub(r"[（(].*?[）)]", "", cleaned).replace("盖章", "").strip()
                     department = cleaned or None
                 elif unit_text:
