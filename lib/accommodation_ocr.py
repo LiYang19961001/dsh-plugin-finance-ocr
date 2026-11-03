@@ -145,14 +145,23 @@ def _bands(ys: list[int], height: int) -> list[tuple[int, int]]:
 def _intervals(xs: list[int], width: int) -> list[tuple[int, int, float]]:
     """把竖线坐标变成列区间（含中心点）。"""
     edges = list(xs)
+    has_left_margin = False
+    has_right_margin = False
     if not edges or edges[0] > width * 0.02:
         edges.insert(0, 0)
+        has_left_margin = True
     if edges[-1] < width - 2:
         edges.append(width)
+        has_right_margin = True
     out = []
     for index in range(len(edges) - 1):
         x0, x1 = edges[index], edges[index + 1]
         out.append((x0, x1, (x0 + x1) / 2.0))
+    # 页边距不是数据列（表格没有铺满整页时，左右空白会被误当成列）
+    if has_right_margin and out:
+        out.pop()
+    if has_left_margin and out:
+        out.pop(0)
     # 去掉左右边缘的窄条（右边界线外的那几个像素），它们不是数据列
     while out and (out[-1][1] - out[-1][0]) < max(6, width * 0.012):
         out.pop()
@@ -391,9 +400,15 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
 
         # 版式固定：列数 = 标准字段数时直接按表格顺序对应；
         # 只有版式变了（列数不一致）才回退到表头关键词匹配。
-        if len(intervals) == len(field_order):
+        # 9 列是"无补助列"的常用版式（序号/房间号/入住人员/开始/结束/天数/单价/金额/签字）。
+        column_layouts = {
+            11: field_order,
+            9: ["seq", "room", "names", "start", "end", "nights", "price", "amount", "signature"],
+        }
+        layout = column_layouts.get(len(intervals))
+        if layout:
             columns = [
-                (field_order[index], x0, x1, center)
+                (layout[index], x0, x1, center)
                 for index, (x0, x1, center) in enumerate(intervals)
             ]
         else:
