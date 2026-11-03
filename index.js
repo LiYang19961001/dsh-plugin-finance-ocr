@@ -542,8 +542,15 @@ export function apply(ctx) {
               if (!fs.existsSync(file)) throw new Error(`明细表图片不存在：${file}`)
             }
             if (!args.no_statement) {
-              if (!args.statement_image || !fs.existsSync(args.statement_image)) {
-                throw new Error(`酒店流水图片不存在：${args.statement_image ?? '(空)'}（机关待遇/无流水请传 no_statement=true）`)
+              const statementPaths = String(args.statement_image ?? '')
+                .split(/[;,]/)
+                .map((item) => item.trim())
+                .filter(Boolean)
+              if (statementPaths.length === 0) {
+                throw new Error('酒店流水图片不存在：(空)（机关待遇/无流水请传 no_statement=true）')
+              }
+              for (const file of statementPaths) {
+                if (!fs.existsSync(file)) throw new Error(`酒店流水图片不存在：${file}`)
               }
             }
           } else if (!args.pairs && args.dataset && !fs.existsSync(args.dataset)) {
