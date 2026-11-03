@@ -178,8 +178,9 @@ def correct_dataset(dataset: dict, roster: dict) -> dict:
             result = correct_names(names, roster, department)
             scoped_department = scoped_department or result["department"]
             uncertain = bool(row.get("names_uncertain"))
-            if uncertain:
-                suggestions.extend(result["suggestions"])
+            # 疑似误识建议一直给出（只提示不改名）：自动识别时 OCR 可能高置信但错字，
+            # 人工核对过的数据也不会被改动，最多多一行提示。
+            suggestions.extend(result["suggestions"])
             for name in result["unknown"]:
                 # OCR 不确定的行，姓名本身可能就是误识，不记成"待确认人员"
                 target = unmatched_uncertain if uncertain else unknown

@@ -130,13 +130,13 @@ index.js            Cordis 插件：export name / inject / apply，用 defineToo
 
 ### 已完成
 
-- **插件**：`dsh-plugin-finance-ocr`（当前 0.2.8），已 `install_bundle` 进 desktop profile（`link:` 本地链接，改代码即时生效）。
+- **插件**：`dsh-plugin-finance-ocr`（当前 0.2.9），已 `install_bundle` 进 desktop profile（`link:` 本地链接，改代码即时生效）。
   六个工具已在本会话真实调用通过：
   - `finance_ocr_extract`（图片 → extraction JSON + 落盘缓存）
   - `finance_verify`（校验报告；硬失败即拒）
   - `finance_export_xlsx`（4 sheet，校验 fail 默认拒导出）
   - `finance_batch_run`（文件夹 → 逐张 识别→校验→导出 + `batch-summary.json`；不同单据金额不合并）
-  - `finance_check_accommodation`（施工住宿费明细表+酒店流水，6 条业务规则；自动去红章、跨页/多日期段合并；多住宿地点 pairs；自动记台账；v0.2.3 起按人员字典检查姓名（v0.2.4 增加外包/临时人员组与名单外待确认登记；v0.2.5 增加机关待遇/无流水的 detail_only 模式；v0.2.8 单住规则修正（除主任外每天≤1 间单住）））
+  - `finance_check_accommodation`（施工住宿费明细表+酒店流水，6 条业务规则；自动去红章、跨页/多日期段合并；多住宿地点 pairs；自动记台账；v0.2.3 起按人员字典检查姓名（v0.2.4 增加外包/临时人员组与名单外待确认登记；v0.2.5 增加机关待遇/无流水的 detail_only 模式；v0.2.8 单住规则修正（除主任外每天≤1 间单住）；v0.2.9 自动识别支持 9 列版式、明细 1~3 页（逐页小计/大小写）、流水 1~2 页合并））
   - `finance_ledger`（台账 list/export/archive）
 - **OCR**：RapidOCR 1.4.4 + onnxruntime 1.31.1，装进 DSH 运行时 Python，**本地离线**，无云 API。
 - **校验层**：金额全程 `Decimal`；明细=合计（容差 0.01，1 分钱差异必抓）、行数守恒（line_id 覆盖集合）、

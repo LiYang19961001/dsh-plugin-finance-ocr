@@ -457,7 +457,8 @@ export function apply(ctx) {
         '④住宿单价不得超上限（车间 130 元/人/天，机关 200 元/人/天）；' +
         '⑤入住人员必须与签字确认是同一组人；⑥小计/合计（含大写）必须正确；' +
         '⑦酒店流水必须逐房间、逐日期段匹配，支付金额一致。' +
-        '可以直接给图片现场识别（detail_images + statement_image，自动去红章、自动合并跨页/多日期段），' +
+        '可以直接给图片现场识别（detail_images + statement_image，自动去红章、自动合并跨页/多日期段；' +
+        '明细 1~3 页、流水 1~2 页都会自动合并，支持 9 列版式（房号列、无补助列）和逐页小计/大小写核对）' +
         '也可以给已结构化的 dataset 只跑核对。' +
         '**机关待遇/不需要流水的部门**（如设计室）：传 no_statement=true，只核对明细表（表格无房间号，' +
         '双人间/流水规则自动跳过），可多张明细表一起核对。' +
@@ -467,11 +468,11 @@ export function apply(ctx) {
       parameters: {
         detail_images: {
           type: 'string',
-          description: '明细表图片的绝对路径，1~2 页，多个用逗号分隔。给了 dataset 时可省略。',
+          description: '明细表图片的绝对路径，1~3 页，多个用逗号分隔。给了 dataset 时可省略。',
         },
         statement_image: {
           type: 'string',
-          description: '酒店流水图片的绝对路径。机关待遇/无流水（no_statement=true）时可不传；给了 dataset 时可省略。',
+          description: '酒店流水图片的绝对路径，1~2 页，多个用逗号分隔。机关待遇/无流水（no_statement=true）时可不传；给了 dataset 时可省略。',
         },
         no_statement: {
           type: 'boolean',

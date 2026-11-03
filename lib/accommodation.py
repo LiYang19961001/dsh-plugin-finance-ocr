@@ -165,6 +165,70 @@ def check(data: dict) -> dict:
     if not rows:
         raise AccommodationError("BAD_INPUT", "detail_sheet.rows 为空，无法核对")
 
+    # ---------- 多页明细：逐页核对各页打印的小计/小写/大写（合并后的总金额稍后统一校） ----------
+    detail_pages = data.get("detail_sheets") or []
+    per_sheet_summary: list[dict] = []
+    if detail_pages:
+        for page_index, page_sheet in enumerate(detail_pages, 1):
+            label = f"第{page_index}页"
+            page_rows = page_sheet.get("rows") or []
+            page_nights = 0
+            page_amount = Decimal("0")
+            for page_row in page_rows:
+                for period in page_row.get("periods") or []:
+                    try:
+                        page_nights += int(period.get("nights") or 0)
+                        page_amount += parse_decimal(period.get("amount"), "住宿金额")
+                    except (AccommodationError, TypeError, ValueError):
+                        continue
+            page_subtotal = page_sheet.get("subtotal") or {}
+            page_subtotal_nights = page_subtotal.get("nights")
+            if page_subtotal_nights is not None and int(page_subtotal_nights) != page_nights:
+                err(
+                    "SUBTOTAL_NIGHTS",
+                    f"{label}小计天数 {page_subtotal_nights} ≠ 该页各段合计 {page_nights}",
+                    expected=str(page_subtotal_nights),
+                    actual=str(page_nights),
+                )
+            page_subtotal_amount = page_subtotal.get("amount")
+            if page_subtotal_amount not in (None, ""):
+                if parse_decimal(page_subtotal_amount) != page_amount:
+                    err(
+                        "SUBTOTAL_AMOUNT",
+                        f"{label}小计金额 {page_subtotal_amount} ≠ 该页合计 {page_amount}",
+                        expected=str(page_subtotal_amount),
+                        actual=str(page_amount),
+                    )
+            page_lowercase = page_sheet.get("lowercase_amount")
+            if page_lowercase not in (None, ""):
+                if parse_decimal(page_lowercase) != page_amount:
+                    err(
+                        "TOTAL_LOWERCASE",
+                        f"{label}合计小写 {page_lowercase} ≠ 该页合计 {page_amount}",
+                        expected=str(page_lowercase),
+                        actual=str(page_amount),
+                    )
+            page_capital = str(page_sheet.get("capital_amount") or "").strip()
+            if page_capital:
+                expected_capital = cn_capital(page_amount)
+                if page_capital != expected_capital:
+                    err(
+                        "TOTAL_CAPITAL",
+                        f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
+                        expected=expected_capital,
+                        actual=page_capital,
+                    )
+            per_sheet_summary.append(
+                {
+                    "sheet": page_index,
+                    "n_rows": len(page_rows),
+                    "nights": page_nights,
+                    "amount": str(page_amount),
+                    "lowercase_amount": page_lowercase,
+                    "capital_amount": page_capital or None,
+                }
+            )
+
     year = int(data.get("year") or (data.get("hotel_statement") or {}).get("year") or date.today().year)
     policy = data.get("policy") or {}
     capacity = int(policy.get("room_capacity", 2))
@@ -173,6 +237,7 @@ def check(data: dict) -> dict:
     rate_expected = parse_decimal(rate_expected, "预期单价") if rate_expected not in (None, "") else None
     rate_cap_raw = policy.get("rate_cap_workshop") or policy.get("rate_cap") or "130"
     rate_cap = parse_decimal(rate_cap_raw, "车间住宿费上限")
+    signature_verified = bool(data.get("signature_verified"))
 
     # ---------- 规则 3/5：每个日期段的天数、金额；明细合计 ----------
     segments: list[dict] = []
@@ -329,8 +394,12 @@ def check(data: dict) -> dict:
 
     # ---------- 规则 4：入住人员 = 签字确认（同组人，顺序不限） ----------
     signature_failed = False
+    signature_verified_count = 0
     for segment in segments:
         if segment["signature_uncertain"] or not segment["signature"]:
+            if signature_verified:
+                signature_verified_count += 1
+                continue
             warn(
                 "SIGNATURE_UNVERIFIED",
                 f"序号{segment['seq']} 房间{segment['room']} 签字为手写体，系统无法机读，需人工核对",
@@ -348,6 +417,12 @@ def check(data: dict) -> dict:
                 seq=segment["seq"],
                 room=segment["room"],
             )
+    if signature_verified_count:
+        note(
+            "SIGNATURE_VERIFIED",
+            f"签字为手写体，已人工核对 {signature_verified_count} 个日期段与入住人员一致",
+            count=signature_verified_count,
+        )
 
     # ---------- 规则 2：同一天不能重复房间 / 重复人 ----------
     room_nights: dict[date, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
@@ -677,6 +752,7 @@ def check(data: dict) -> dict:
             "first_night": str(min(room_nights)) if room_nights else None,
             "last_night": str(max(room_nights)) if room_nights else None,
             "department": sheet.get("department") or data.get("department"),
+            "per_sheet": per_sheet_summary,
         },
         "single_rooms": single_records,
         "room_gaps": gaps,

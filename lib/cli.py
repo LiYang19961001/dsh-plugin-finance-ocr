@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-PLUGIN_VERSION = "0.2.8"
+PLUGIN_VERSION = "0.2.9"
 SCHEMA_EXTRACT = "finance-extract/1"
 SCHEMA_VERIFY = "finance-verify/1"
 HERE = Path(__file__).resolve().parent
@@ -629,13 +629,13 @@ def _load_accommodation_policy(payload: dict) -> dict:
 
 
 def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
-    """一组住宿材料（某住宿地点的 1~2 页明细 + 1 页流水）→ 结构化数据 + 落盘路径。"""
+    """一组住宿材料（某住宿地点的 1~3 页明细 + 1~2 页流水）→ 结构化数据 + 落盘路径。"""
     detail_paths = _split_paths(pair.get("detail_images"))
     statement_paths = _split_paths(pair.get("statement_image"))
     if not detail_paths or not statement_paths:
         raise CliError(
             "BAD_INPUT",
-            "每组需要 detail_images（1~2 张明细图，逗号分隔）和 statement_image（酒店流水图）",
+            "每组需要 detail_images（明细图，逗号分隔）和 statement_image（酒店流水图，可多页）",
         )
     for path in detail_paths + statement_paths:
         if not path.is_absolute():
@@ -645,25 +645,18 @@ def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
 
     accommodation_ocr = import_module("accommodation_ocr")
     ocr_engine = import_module("ocr_engine")
-    pages = []
-    for path in detail_paths[:2]:
+    detail_pages = []
+    for path in detail_paths[:3]:
         dered = _dered_image(path)
-        pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
-    statement_dered = _dered_image(statement_paths[0])
-    statement_ocr = ocr_engine.run_ocr(str(statement_dered))
-    data = accommodation_ocr.build_dataset(
-        pages,
-        {
-            "source": str(statement_dered),
-            "lines": statement_ocr.get("lines") or [],
-            "width": statement_ocr.get("width"),
-            "height": statement_ocr.get("height"),
-        },
-        policy=policy,
-    )
+        detail_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
+    statement_pages = []
+    for path in statement_paths[:4]:
+        dered = _dered_image(path)
+        statement_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
+    data = accommodation_ocr.build_dataset(detail_pages, statement_pages, policy=policy)
     data["source_images"] = {
-        "detail": [str(path) for path in detail_paths[:2]],
-        "statement": str(statement_paths[0]),
+        "detail": [str(path) for path in detail_paths[:3]],
+        "statement": [str(path) for path in statement_paths[:4]],
     }
     save = pair.get("save_dataset")
     if save:
@@ -808,25 +801,34 @@ def _guess_batch(payload: dict, report: dict) -> str:
     return datetime.now().astimezone().strftime("%Y-%m")
 
 
+def _basename_first(value) -> str | None:
+    """source/source_images 可能是字符串、列表或列表的字符串形式，统一取第一个文件名。"""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else None
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            parsed = json.loads(value.replace("'", '"'))
+            value = parsed[0] if parsed else None
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if not value:
+        return None
+    return Path(str(value)).name
+
+
 def _source_label(dataset: dict) -> str:
     images = dataset.get("source_images") or {}
-    statement = images.get("statement")
-    if statement:
-        return Path(str(statement)).name
-    source = (dataset.get("hotel_statement") or {}).get("source")
-    if isinstance(source, (list, tuple)):
-        source = source[0] if source else None
-    if source:
-        return Path(str(source)).name
-    detail = (dataset.get("detail_sheet") or {}).get("source")
-    if isinstance(detail, (list, tuple)) and detail:
-        return Path(str(detail[0])).name
+    for candidate in (
+        _basename_first(images.get("statement")),
+        _basename_first((dataset.get("hotel_statement") or {}).get("source")),
+        _basename_first((dataset.get("detail_sheet") or {}).get("source")),
+    ):
+        if candidate:
+            return candidate
     for sheet in dataset.get("detail_sheets") or []:
-        source = sheet.get("source")
-        if isinstance(source, (list, tuple)) and source:
-            return Path(str(source[0])).name
-        if source:
-            return Path(str(source)).name
+        candidate = _basename_first(sheet.get("source"))
+        if candidate:
+            return candidate
     return "unknown"
 
 
@@ -980,6 +982,11 @@ def cmd_accommodation(payload: dict) -> tuple[dict, int]:
             label = str(pair.get("label") or f"住宿地点{index}")
             try:
                 data, dataset_path = _accommodation_extract_pair(pair, policy)
+                if pair.get("signature_verified") is not None or payload.get("signature_verified") is not None:
+                    data["signature_verified"] = bool(
+                        pair.get("signature_verified") if pair.get("signature_verified") is not None
+                        else payload.get("signature_verified")
+                    )
                 name_match = _apply_roster(data, roster_module)
                 report = _accommodation_report(accommodation, data, policy)
                 _augment_report_with_names(report, name_match)
@@ -1088,6 +1095,9 @@ def cmd_accommodation(payload: dict) -> tuple[dict, int]:
             },
             policy,
         )
+
+    if payload.get("signature_verified") is not None:
+        data["signature_verified"] = bool(payload.get("signature_verified"))
 
     name_match = _apply_roster(data, roster_module)
     report = _accommodation_report(accommodation, data, policy)

@@ -358,3 +358,15 @@ python.exe lib/cli.py <command> --input <input.json> --output <output.json>
 - 跳过：双人间/单住（无房间号）、酒店流水匹配（机关待遇不核流水），`rules` 里记为 `skip`。
 - 报告里会提示单价档位（如 142/180 元/天）与常规标准的差异，供人工确认。
 
+## 14. 多页 / 9 列版式（v0.2.9）
+
+- **明细表 1~3 页**：逐页识别后，`detail_sheets` 保留每页的 rows/subtotal/lowercase_amount/capital_amount；
+  `detail_sheet` 仍是合并后的全部 rows + 合计。check 会**逐页**核对小计/小写/大写（错误信息带"第 N 页"），
+  再对合并后的总额、天数做整体核对。
+- **9 列版式**（序号/房号/入住人员/开始/结束/住宿天数/单价/住宿金额/签字确认，无补助列）：
+  表头"序号房号"被 OCR 合并、房号单元格纵向合并时，会按版式位置/相邻日期段/同组人补全房号。
+- **流水 1~2 页**：同一住宿地点的多页流水（同版式）会自动合并，`payment_amounts` 从末页读取；
+  续行没有房号时按邻近/上一行补全。流水与明细仍按（房间号 + 起止日期）逐段匹配。
+- `statement_image` 支持逗号分隔多页；`detail_images` 支持 1~3 页。手写签字人工核对后可传
+  `signature_verified=true`：签字规则记为已核对（报告里 `SIGNATURE_VERIFIED` 提示），不再进待确认。
+

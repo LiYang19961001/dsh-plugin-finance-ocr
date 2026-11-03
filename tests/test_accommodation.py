@@ -518,5 +518,76 @@ class RateCapTests(unittest.TestCase):
         self.assertEqual(report["status"], "pass", report["errors"])
 
 
+def multi_page_dataset():
+    """两页明细 + 一页流水：合并核对 + 逐页小计/大小写。"""
+    page1_rows = [
+        {"seq": 1, "room": "301", "names": ["张三", "李四"],
+         "periods": [{"start": "10月10日", "end": "10月13日", "nights": 3, "price": "128", "amount": "384"}],
+         "signature": ["张三", "李四"]},
+    ]
+    page2_rows = [
+        {"seq": 2, "room": "302", "names": ["王五"],
+         "periods": [{"start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"}],
+         "signature": ["王五"]},
+    ]
+    return {
+        "schema_version": "finance-accommodation/1",
+        "year": 2026,
+        "department": "某段A车间",
+        "policy": {"room_capacity": 2, "rate": "128", "directors": ["林七"]},
+        "detail_sheet": {
+            "rows": page1_rows + page2_rows,
+            "subtotal": {"nights": 7, "amount": "896"},
+            "lowercase_amount": "896.00",
+            "capital_amount": "捌佰玖拾陆元整",
+        },
+        "detail_sheets": [
+            {"rows": page1_rows, "subtotal": {"nights": 3, "amount": "384"},
+             "lowercase_amount": "384.00", "capital_amount": "叁佰捌拾肆元整"},
+            {"rows": page2_rows, "subtotal": {"nights": 4, "amount": "512"},
+             "lowercase_amount": "512.00", "capital_amount": "伍佰壹拾贰元整"},
+        ],
+        "hotel_statement": {
+            "rows": [
+                {"room": "301", "start": "10月10日", "end": "10月13日", "nights": 3, "price": "128", "amount": "384"},
+                {"room": "302", "start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"},
+            ],
+            "payment_amounts": ["896"],
+        },
+    }
+
+
+class MultiSheetTests(unittest.TestCase):
+    def test_multi_page_pass(self):
+        report = check(multi_page_dataset())
+        self.assertEqual(report["status"], "pass", report["errors"])
+        self.assertEqual(report["summary"]["total_nights"], 7)
+        self.assertEqual(len(report["summary"]["per_sheet"]), 2)
+
+    def test_multi_page_subtotal_mismatch(self):
+        data = multi_page_dataset()
+        data["detail_sheets"][1]["subtotal"] = {"nights": 5, "amount": "512"}
+        report = check(data)
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("SUBTOTAL_NIGHTS", [item["rule"] for item in report["errors"]])
+
+    def test_multi_page_capital_mismatch(self):
+        data = multi_page_dataset()
+        data["detail_sheets"][0]["capital_amount"] = "叁佰捌拾肆元"
+        report = check(data)
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("TOTAL_CAPITAL", [item["rule"] for item in report["errors"]])
+
+    def test_signature_verified_standard_mode(self):
+        data = multi_page_dataset()
+        for row in data["detail_sheet"]["rows"]:
+            row["signature"] = []
+        self.assertEqual(check(data)["status"], "needs_review")
+        data["signature_verified"] = True
+        report = check(data)
+        self.assertEqual(report["status"], "pass", report["errors"])
+        self.assertIn("SIGNATURE_VERIFIED", [item["rule"] for item in report["notes"]])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

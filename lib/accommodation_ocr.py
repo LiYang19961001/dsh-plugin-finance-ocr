@@ -38,7 +38,7 @@ SCHEMA = "finance-accommodation/1"
 # 明细表字段（顺序与表格列顺序一致），aliases 兼容 OCR 常见误识
 DETAIL_FIELDS = [
     ("seq", ["序号", "序亏", "序"]),
-    ("room", ["房间号", "方间号", "房问号", "房间亏"]),
+    ("room", ["房间号", "方间号", "房问号", "房间亏", "房号"]),
     ("names", ["入住人员", "入住人负", "入住人员"]),
     ("start", ["开始日期", "开蛤日期", "开始日其"]),
     ("end", ["结束日期", "站束日期", "结束日其"]),
@@ -325,13 +325,24 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
             matched = {field for field in (_match_field(line["text"], DETAIL_FIELDS) for line in band_lines) if field}
             if len(matched) >= 3:
                 header_band = band_index
+                dept_text = None
+                unit_text = None
                 for line in lines:
-                    if line["bbox"][3] <= y0:
-                        text = line["text"]
-                        if "明细表" in text:
-                            title = text.strip()
-                        if "部门" in text or "单位" in text:
-                            department = text.strip()
+                    if line["bbox"][3] > y0:
+                        continue
+                    text = line["text"].strip()
+                    if "明细表" in text and title is None:
+                        title = text
+                    if "部门" in text and dept_text is None:
+                        dept_text = text
+                    elif "单位" in text and unit_text is None:
+                        unit_text = text
+                if dept_text:
+                    cleaned = re.sub(r"^.*?部门[:：]?", "", dept_text)
+                    cleaned = re.sub(r"[（(].*?[）)]", "", cleaned).replace("盖章", "").strip()
+                    department = cleaned or None
+                elif unit_text:
+                    department = unit_text
                 break
 
         # 版式固定：列数 = 标准字段数时直接按表格顺序对应；
@@ -352,13 +363,28 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                     for index, (x0, x1, center) in enumerate(intervals)
                 ]
         fields = [column[0] for column in columns]
+        # 表头"序号房号"被 OCR 合并成一个单元格时，房号列会缺失/错位：
+        # 按"序号-房号-入住人员"的固定版式位置把两列纠正回来（9 列版式常见）。
+        if "room" not in fields and "seq" in fields and "names" in fields:
+            seq_index = fields.index("seq")
+            names_index = fields.index("names")
+            if names_index - seq_index >= 2:
+                room_index = seq_index + 1
+                columns[room_index] = ("room",) + tuple(columns[room_index][1:])
+                fields[room_index] = "room"
+            elif names_index == seq_index + 1 and seq_index >= 1 and fields[seq_index - 1] is None:
+                # 合并表头被识别到了房号列：序号应在左一列，房号在中间列
+                columns[seq_index - 1] = ("seq",) + tuple(columns[seq_index - 1][1:])
+                fields[seq_index - 1] = "seq"
+                columns[seq_index] = ("room",) + tuple(columns[seq_index][1:])
+                fields[seq_index] = "room"
 
         # ---- 逐行带收集字段，再按"房间号/序号"锚点把行带归并成记录 ----
-        skip_bands = {header_band} if header_band is not None else set()
+        # 只从表头下方开始处理，避免把标题/单位/logo 行当成数据行。
+        start_band = (header_band + 1) if header_band is not None else 0
         infos: list[dict] = []
-        for band_index, (y0, y1) in enumerate(bands):
-            if band_index in skip_bands:
-                continue
+        for band_index in range(start_band, len(bands)):
+            y0, y1 = bands[band_index]
             band_lines = _lines_in_band(lines, y0, y1)
             if not band_lines:
                 continue
@@ -394,10 +420,26 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                 for line in band_lines:
                     if "小写" in _norm(line["text"]):
                         continue
-                    value = _parse_number(line["text"])
-                    if value is not None and len(NUM_RE.findall(_norm(line["text"]))) == 1:
+                    cleaned = _norm(line["text"]).replace(",", "").replace("，", "")
+                    value = _parse_number(cleaned)
+                    if value is not None and len(NUM_RE.findall(cleaned)) == 1:
                         lowercase = str(value)
                 continue
+
+            # 小计行有时没有 OCR 出"小计"两个字：只有天数/金额、没有姓名和日期 → 按小计处理
+            probe_start_dates: list[str] = []
+            for text in texts_of("start"):
+                probe_start_dates.extend(_extract_dates(text))
+            if not probe_start_dates and not texts_of("names") and not subtotal:
+                probe_nights = texts_of("nights")
+                probe_amount = texts_of("amount")
+                if probe_nights and probe_amount:
+                    nights_value = _parse_number(probe_nights[0], integer=True)
+                    amount_value = _parse_number(probe_amount[0])
+                    if nights_value and amount_value is not None:
+                        subtotal["nights"] = nights_value
+                        subtotal["amount"] = str(amount_value)
+                        continue
 
             seq_texts = texts_of("seq")
             room_texts = texts_of("room")
@@ -437,6 +479,8 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                 sim = [line["confidence"] for line in buckets[fields.index("names")]]
                 if sim and min(sim) < 0.9:
                     names_uncertain = True
+            if not start_dates and not end_dates and not room and seq is None:
+                continue  # 标题/logo/水印等非数据行
             infos.append(
                 {
                     "band_index": band_index,
@@ -506,6 +550,40 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                 slot["seq"] = info["seq"]
             if info["has_signature"]:
                 slot["signature_uncertain"] = True
+        # 房号单元格纵向合并时只有一行能 OCR 到房号：按"日期段首尾相接"补到缺房号的那一行
+        def _slot_bounds(slot):
+            items = [info for info in slot["infos"] if info["starts"] and info["ends"]]
+            if not items:
+                return None
+            return items[0]["starts"][0], items[-1]["ends"][-1]
+
+        for index, slot in enumerate(slots):
+            if slot["room"]:
+                continue
+            own = _slot_bounds(slot)
+            if not own:
+                continue
+            for neighbor_index in (index - 1, index + 1):
+                if not (0 <= neighbor_index < len(slots)):
+                    continue
+                neighbor = slots[neighbor_index]
+                if not neighbor["room"]:
+                    continue
+                neighbor_bounds = _slot_bounds(neighbor)
+                if not neighbor_bounds:
+                    continue
+                if neighbor_bounds[0] == own[1] or neighbor_bounds[1] == own[0]:
+                    slot["room"] = neighbor["room"]
+                    break
+            if not slot["room"] and slot["names"]:
+                # 两行是同一组人、中间隔了几天（合并单元格拆成两段）：按同名组补房号
+                for neighbor_index in (index + 1, index - 1):
+                    if not (0 <= neighbor_index < len(slots)):
+                        continue
+                    neighbor = slots[neighbor_index]
+                    if neighbor["room"] and set(neighbor["names"]) == set(slot["names"]):
+                        slot["room"] = neighbor["room"]
+                        break
         for slot in slots:
             for info in sorted(slot["infos"], key=lambda item: item["band_index"]):
                 if not info["starts"] and not info["ends"]:
@@ -731,12 +809,227 @@ def extract_statement(image_path: str, ocr_result: dict) -> dict:
     }
 
 
-def build_dataset(detail_pages: list[tuple[str, dict]], statement: dict, policy: dict | None = None) -> dict:
-    """把识别结果组装成 accommodation.check 需要的数据集。"""
-    sheet = extract_detail(detail_pages)
-    statement_data = extract_statement(
-        statement.get("source", ""), statement
-    ) if statement else {}
+def _cluster_lines_by_y(lines: list[dict], tolerance: float = 9.0) -> list[list[dict]]:
+    clusters: list[list[dict]] = []
+    centers: list[float] = []
+    for line in sorted(lines, key=lambda item: (item["bbox"][1] + item["bbox"][3]) / 2.0):
+        center = (line["bbox"][1] + line["bbox"][3]) / 2.0
+        if clusters and abs(center - centers[-1]) <= tolerance:
+            clusters[-1].append(line)
+            centers[-1] = sum((item["bbox"][1] + item["bbox"][3]) / 2.0 for item in clusters[-1]) / len(clusters[-1])
+        else:
+            clusters.append([line])
+            centers.append(center)
+    return clusters
+
+
+def _number_text(value) -> str:
+    text = str(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text
+
+
+def _parse_statement_row(cells: list[tuple[float, str]]) -> dict | None:
+    """把一行的 OCR 单元格解析成流水记录（按日期位置分左右，再按顺序识别数字）。"""
+    dates: list[tuple[float, str]] = []
+    numbers: list[tuple[float, str, "object"]] = []
+    for x_center, text in cells:
+        normalized = _norm(text)
+        tokens = re.findall(r"\d+", normalized)
+        if any(len(token) >= 6 for token in tokens):
+            continue  # 水印/打印时间等长数字
+        found_dates = _extract_dates(text)
+        if found_dates:
+            for date_text in found_dates:
+                dates.append((x_center, date_text))
+            continue
+        cleaned = normalized.replace(",", "").replace("，", "")
+        if re.search(r"[年月日]", cleaned):
+            continue
+        if not re.fullmatch(r"-?\d+(?:\.\d+)?", cleaned):
+            continue
+        value = _parse_number(cleaned)
+        if value is not None:
+            numbers.append((x_center, cleaned, value))
+    dates.sort(key=lambda item: item[0])
+    if len(dates) < 2:
+        return None
+    start, end = dates[0][1], dates[1][1]
+    first_date_x, last_date_x = dates[0][0], dates[-1][0]
+    before = sorted(item for item in numbers if item[0] < first_date_x)
+    after = sorted(item for item in numbers if item[0] > last_date_x)
+    room = ""
+    seq = None
+    for _, text, value in before:
+        if not room and re.fullmatch(r"\d{3}[A-Za-z]?", text) and 100 <= value <= 999:
+            room = text
+        elif seq is None and re.fullmatch(r"\d{1,3}", text) and 1 <= value <= 200:
+            seq = int(value)
+    nights = price = amount = None
+    after_values = [value for _, _, value in after if 50 <= value <= 30000]
+    try:
+        computed_nights = (_parse_statement_date(end) - _parse_statement_date(start)).days
+    except Exception:
+        computed_nights = None
+    if len(after_values) >= 3:
+        first, second, third = after_values[0], after_values[1], after_values[2]
+        nights = int(first) if first <= 60 and float(first).is_integer() else computed_nights
+        price, amount = second, third
+    elif len(after_values) == 2:
+        first, second = after_values
+        if first <= 60 and float(first).is_integer():
+            nights, amount = int(first), second
+            price = amount / nights if nights else None
+        else:
+            price, amount = first, second
+            nights = computed_nights
+    elif len(after_values) == 1:
+        amount = after_values[0]
+        nights = computed_nights
+        price = amount / nights if nights else None
+    if amount is None or not nights or nights <= 0:
+        return None
+    if price is None:
+        return None
+    if nights > 60 or not (30 <= price <= 1000) or not (30 <= amount <= 30000):
+        return None
+    return {
+        "room": room,
+        "seq": seq,
+        "start": start,
+        "end": end,
+        "nights": int(nights),
+        "price": _number_text(price),
+        "amount": _number_text(amount),
+    }
+
+
+def extract_statement_pages(pages: list[tuple[str, dict]]) -> dict:
+    """多页"酒店明细表"（无表格线版式）识别：按行聚类 + 按日期位置分左右，空白房间号沿用上一行。
+
+    pages: [(image_path, ocr_result), ...]；返回合并后的 {rows, payment_amounts, problems, source}。
+    """
+    rows: list[dict] = []
+    payment_amounts: list[str] = []
+    problems: list[str] = []
+    for image_path, ocr in pages:
+        lines = [line for line in ocr.get("lines") or [] if _norm(line.get("text"))]
+        if not lines:
+            continue
+        width = float(ocr.get("width") or max((line["bbox"][2] for line in lines), default=1) or 1)
+        room_candidates: list[tuple[float, str]] = []
+        for line in lines:
+            text = _norm(line.get("text"))
+            if not re.fullmatch(r"\d{3}[A-Za-z]?", text):
+                continue
+            x_center = (line["bbox"][0] + line["bbox"][2]) / 2.0
+            if x_center > width * 0.4:
+                continue
+            if not (100 <= int(text[:3]) <= 999):
+                continue
+            room_candidates.append(((line["bbox"][1] + line["bbox"][3]) / 2.0, text))
+        last_room = None
+        for cluster in _cluster_lines_by_y(lines):
+            cells = sorted(
+                ((line["bbox"][0] + line["bbox"][2]) / 2.0, str(line["text"]).strip()) for line in cluster
+            )
+            joined = _norm("".join(text for _, text in cells))
+            if "消费金额" in joined or "现金支付" in joined:
+                for _, text in cells:
+                    normalized = _norm(text)
+                    if any(len(token) >= 6 for token in re.findall(r"\d+", normalized)):
+                        continue
+                    number = _parse_number(normalized)
+                    if number is not None and 1000 <= number <= 1_000_000:
+                        payment_amounts.append(_number_text(number))
+                continue
+            if "序号" in joined or "房间号" in joined or "部门" in joined or "明细表" in joined:
+                continue
+            parsed = _parse_statement_row(cells)
+            if parsed is None:
+                continue
+            row_y = sum((line["bbox"][1] + line["bbox"][3]) / 2.0 for line in cluster) / len(cluster)
+            if not parsed["room"] and room_candidates:
+                nearest = min(room_candidates, key=lambda item: abs(item[0] - row_y))
+                if abs(nearest[0] - row_y) <= 18:
+                    parsed["room"] = nearest[1]
+            if not parsed["room"] and last_room:
+                parsed["room"] = last_room
+            if parsed["room"]:
+                last_room = parsed["room"]
+            rows.append(
+                {
+                    "room": parsed["room"],
+                    "start": parsed["start"],
+                    "end": parsed["end"],
+                    "nights": parsed["nights"],
+                    "price": parsed["price"],
+                    "amount": parsed["amount"],
+                }
+            )
+    return {
+        "source": [str(path) for path, _ in pages],
+        "rows": rows,
+        "payment_amounts": payment_amounts,
+        "printed_date": None,
+        "problems": problems,
+    }
+
+
+def _parse_statement_date(text: str):
+    from datetime import date
+
+    match = DATE_RE.search(str(text))
+    if not match:
+        raise ValueError(text)
+    return date(2000, int(match.group(1)), int(match.group(2)))
+
+
+def build_dataset(
+    detail_pages: list[tuple[str, dict]],
+    statement_pages: "list[tuple[str, dict]] | dict | None",
+    policy: dict | None = None,
+) -> dict:
+    """把识别结果组装成 accommodation.check 需要的数据集（支持多页明细/多页流水）。"""
+    if isinstance(statement_pages, dict):
+        statement_pages = [(statement_pages.get("source", ""), statement_pages)]
+    statement_pages = statement_pages or []
+
+    if len(detail_pages) > 1:
+        sheets = [extract_detail([page]) for page in detail_pages]
+        rows = [row for sheet in sheets for row in (sheet.get("rows") or [])]
+        subtotal_nights = sum(
+            sum(int(period["nights"]) for row in (sheet.get("rows") or []) for period in row.get("periods") or [])
+            for sheet in sheets
+        )
+        subtotal_amount = sum(
+            sum(Decimal(str(period["amount"])) for row in (sheet.get("rows") or []) for period in row.get("periods") or [])
+            for sheet in sheets
+        )
+        sheet = {
+            "source": [str(path) for path, _ in detail_pages],
+            "rows": rows,
+            "subtotal": {"nights": subtotal_nights, "amount": str(subtotal_amount)},
+            "lowercase_amount": None,
+            "capital_amount": None,
+            "title": sheets[0].get("title") if sheets else None,
+            "department": sheets[0].get("department") if sheets else None,
+            "problems": [item for sheet_item in sheets for item in sheet_item.get("problems") or []],
+        }
+        detail_sheets = sheets
+    else:
+        sheet = extract_detail(detail_pages)
+        detail_sheets = None
+
+    if len(statement_pages) > 1:
+        statement_data = extract_statement_pages(statement_pages)
+    elif statement_pages:
+        path, ocr = statement_pages[0]
+        statement_data = extract_statement(str(path), ocr)
+    else:
+        statement_data = {}
+
     year = None
     printed = statement_data.get("printed_date") or ""
     match = re.search(r"(\d{4})年", printed)
@@ -753,6 +1046,10 @@ def build_dataset(detail_pages: list[tuple[str, dict]], statement: dict, policy:
                 if value and "年" not in str(value):
                     period[key] = f"{year}年{value}"
 
+    clean_policy = {
+        key: value for key, value in (policy or {}).items()
+        if key not in ("ledger", "roster", "unknown_register")
+    }
     dataset = {
         "schema_version": SCHEMA,
         "template": sheet.get("title") or "施工住宿费明细表",
@@ -778,9 +1075,23 @@ def build_dataset(detail_pages: list[tuple[str, dict]], statement: dict, policy:
         "policy": {
             "room_capacity": 2,
             "rate": "128",
-            **(policy or {}),
+            **clean_policy,
         },
     }
+    if detail_sheets:
+        dataset["detail_sheets"] = [
+            {
+                "source": item.get("source"),
+                "rows": item.get("rows") or [],
+                "subtotal": item.get("subtotal") or {},
+                "lowercase_amount": item.get("lowercase_amount"),
+                "capital_amount": item.get("capital_amount"),
+                "title": item.get("title"),
+                "department": item.get("department"),
+                "problems": item.get("problems") or [],
+            }
+            for item in detail_sheets
+        ]
     return dataset
 
 
