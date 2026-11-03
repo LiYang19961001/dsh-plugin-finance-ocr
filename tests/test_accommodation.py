@@ -324,9 +324,10 @@ class SoftFailureTests(unittest.TestCase):
         data = base_dataset()
         data["hotel_statement"]["rows"][0]["room"] = ""  # 被印章遮挡
         report = check(data)
-        self.assertEqual(report["status"], "needs_review", report["errors"])
+        # 日期段+天数+金额唯一匹配到明细房间，按该房间核对，记提示不改变结论
+        self.assertEqual(report["status"], "pass", report["errors"])
         self.assertEqual(report["errors"], [])
-        self.assertIn("STATEMENT_ROOM_UNCLEAR", [item["rule"] for item in report["warnings"]])
+        self.assertIn("STATEMENT_ROOM_MATCHED", [item["rule"] for item in report["notes"]])
 
     def test_room_gap_note(self):
         data = base_dataset()

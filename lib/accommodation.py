@@ -62,6 +62,22 @@ def parse_decimal(value, field: str = "金额") -> Decimal:
         raise AccommodationError("BAD_INPUT", f"{field} 不是数字：{value!r}")
 
 
+def _capital_ignoring_zero(text: str) -> str:
+    return str(text or "").replace("零", "")
+
+
+def _capital_ocr_damaged(capital: str, expected: str) -> bool:
+    """大写 OCR 缺字（漏字/截断）判断：剩余字符仍按原顺序出现在正确大写里。"""
+    capital = str(capital or "").strip()
+    expected = str(expected or "")
+    if not capital or not expected:
+        return True
+    if capital in expected or expected in capital:
+        return True
+    iterator = iter(expected)
+    return all(char in iterator for char in capital)
+
+
 def cn_capital(amount: Decimal) -> str:
     """人民币大写（0 及正数，两位小数）。"""
     amount = amount.quantize(Decimal("0.01"))
@@ -212,20 +228,12 @@ def check(data: dict) -> dict:
             if page_capital:
                 expected_capital = cn_capital(page_amount)
                 if page_capital != expected_capital:
-                    if len(page_capital) <= len(expected_capital) - 2:
-                        warn(
-                            "TOTAL_CAPITAL_OCR",
-                            f"{label}合计大写「{page_capital}」像是 OCR 识别不完整（应为「{expected_capital}」），请人工核对大写",
-                            expected=expected_capital,
-                            actual=page_capital,
-                        )
-                    else:
-                        err(
-                            "TOTAL_CAPITAL",
-                            f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
-                            expected=expected_capital,
-                            actual=page_capital,
-                        )
+                    err(
+                        "TOTAL_CAPITAL",
+                        f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
+                        expected=expected_capital,
+                        actual=page_capital,
+                    )
             per_sheet_summary.append(
                 {
                     "sheet": page_index,
@@ -393,7 +401,14 @@ def check(data: dict) -> dict:
     if capital:
         expected_capital = cn_capital(total_amount)
         if capital != expected_capital:
-            if len(capital) <= len(expected_capital) - 2:
+            if _capital_ignoring_zero(capital) == _capital_ignoring_zero(expected_capital):
+                note(
+                    "TOTAL_CAPITAL_STYLE",
+                    f"合计大写「{capital}」金额一致但写法不规范（规范为「{expected_capital}」），不影响金额核对",
+                    expected=expected_capital,
+                    actual=capital,
+                )
+            elif _capital_ocr_damaged(capital, expected_capital):
                 warn(
                     "TOTAL_CAPITAL_OCR",
                     f"合计大写「{capital}」像是 OCR 识别不完整（应为「{expected_capital}」），请人工核对大写",
@@ -676,10 +691,10 @@ def check(data: dict) -> dict:
             continue
         key, seg = candidate
         matched_detail_keys.add(key)
-        warn(
-            "STATEMENT_ROOM_UNCLEAR",
-            f"酒店流水有一行房间号被印章遮挡未识别，按日期段+天数+金额匹配到明细 房间{seg['room']} "
-            f"{seg['start']}→{seg['end']}，请人工确认房间号",
+        note(
+            "STATEMENT_ROOM_MATCHED",
+            f"酒店流水有一行房间号被印章遮挡未识别，按日期段+天数+金额唯一匹配到明细 房间{seg['room']} "
+            f"{seg['start']}→{seg['end']}，已按该房间核对",
             room=seg["room"],
         )
     for key, seg in detail_index.items():

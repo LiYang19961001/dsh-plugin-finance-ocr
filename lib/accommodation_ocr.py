@@ -300,6 +300,24 @@ def _header_columns(lines: list[dict], intervals, width: int, fields):
     return columns
 
 
+def _looks_like_department(text: str) -> bool:
+    """表头"部门：xxx（盖章）"——OCR 可能把"部门"认成近形字，或用逗号代替冒号。"""
+    value = (text or "").strip()
+    if not value:
+        return False
+    if "部门" in value:
+        return True
+    return bool(re.match(r"^部.{0,3}[,，:：]", value))
+
+
+def _clean_department(text: str) -> str | None:
+    parts = re.split(r"[,，:：]", text, maxsplit=1)
+    cleaned = parts[1] if len(parts) > 1 else text
+    cleaned = re.sub(r"^.*?部门?", "", cleaned)
+    cleaned = re.sub(r"[（(].*?[）)]", "", cleaned).replace("盖章", "").strip()
+    return cleaned or None
+
+
 def extract_detail(pages: list[tuple[str, dict]]) -> dict:
     """明细表（1~2 页）识别。pages: [(image_path, ocr_result), ...]。"""
     all_records: list[dict] = []
@@ -333,17 +351,41 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                     text = line["text"].strip()
                     if "明细表" in text and title is None:
                         title = text
-                    if ("部门" in text or re.match(r"^部.{0,2}[:：]", text)) and dept_text is None:
+                    if _looks_like_department(text) and dept_text is None:
                         dept_text = text
                     elif "单位" in text and unit_text is None:
                         unit_text = text
                 if dept_text:
-                    parts = re.split(r"[:：]", dept_text, maxsplit=1)
-                    cleaned = parts[1] if len(parts) > 1 else dept_text
-                    cleaned = re.sub(r"^.*?部门?", "", cleaned)
-                    cleaned = re.sub(r"[（(].*?[）)]", "", cleaned).replace("盖章", "").strip()
-                    department = cleaned or None
-                elif unit_text:
+                    department = _clean_department(dept_text)
+                if not department:
+                    # 兜底："邵门：xxx" + 下一行"车间（盖乘）"这类被 OCR 拆开的部门行
+                    top_lines = [line for line in lines if line["bbox"][3] <= y0]
+                    pieces: list[str] = []
+                    anchor = None
+                    for line in top_lines:
+                        text = line["text"].strip()
+                        if "单位" in text or "明细表" in text:
+                            continue
+                        if "：" in text or ":" in text:
+                            anchor = line
+                            pieces.append(re.split(r"[:：]", text, maxsplit=1)[-1])
+                            break
+                    if anchor is not None:
+                        anchor_center = (anchor["bbox"][1] + anchor["bbox"][3]) / 2.0
+                        for line in top_lines:
+                            if line is anchor:
+                                continue
+                            center = (line["bbox"][1] + line["bbox"][3]) / 2.0
+                            if abs(center - anchor_center) > 24:
+                                continue
+                            text = line["text"].strip()
+                            if any(word in text for word in ("车间", "设计室", "班组", "段")):
+                                pieces.append(text)
+                        joined = "".join(pieces)
+                        cleaned = _clean_department("部：" + joined) if "部" not in joined else _clean_department(joined)
+                        if cleaned:
+                            department = cleaned
+                if not department and unit_text:
                     department = unit_text
                 break
 
@@ -618,10 +660,19 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
             for info in sorted(slot["infos"], key=lambda item: item["band_index"]):
                 if not info["starts"] and not info["ends"]:
                     continue
-                price = info["price"]
-                if price is None and info["amount"] and info["nights"]:
+                nights_value = info["nights"]
+                if nights_value is None and info["starts"] and info["ends"]:
+                    # 合并单元格导致"住宿天数"缺识别时，按起止日期补
                     try:
-                        price = str(Decimal(str(info["amount"])) / Decimal(str(info["nights"])))
+                        nights_value = (
+                            _parse_statement_date(info["ends"][0]) - _parse_statement_date(info["starts"][0])
+                        ).days
+                    except Exception:
+                        nights_value = None
+                price = info["price"]
+                if price is None and info["amount"] and nights_value:
+                    try:
+                        price = str(Decimal(str(info["amount"])) / Decimal(str(nights_value)))
                         price = price.rstrip("0").rstrip(".") if "." in price else price
                     except Exception:
                         price = None
@@ -629,7 +680,7 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                     {
                         "start": info["starts"][0] if info["starts"] else None,
                         "end": info["ends"][0] if info["ends"] else None,
-                        "nights": info["nights"],
+                        "nights": nights_value,
                         "price": price,
                         "amount": info["amount"],
                     }
@@ -1176,16 +1227,11 @@ def _dept_title(lines: list[dict]) -> tuple[str | None, str | None]:
             title = text if title is None else title
     for line in lines:
         text = _norm(line.get("text") or "")
-        if "部门" not in text:
+        if not _looks_like_department(text):
             continue
-        match = re.search(r"部门[:：]?(.*)", text)
-        if not match:
-            continue
-        raw = match.group(1)
-        raw = re.sub(r"[（(].*?[）)]", "", raw)
-        raw = raw.replace("盖章", "").strip()
-        if len(raw) >= 2:
-            department = raw
+        cleaned = _clean_department(text)
+        if cleaned and len(cleaned) >= 2:
+            department = cleaned
             break
     return department, title
 
