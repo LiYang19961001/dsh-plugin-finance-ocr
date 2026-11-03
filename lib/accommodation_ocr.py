@@ -1128,6 +1128,55 @@ def _dept_title(lines: list[dict]) -> tuple[str | None, str | None]:
     return department, title
 
 
+def _synth_grid_from_headers(lines: list[dict], width: float, height: float) -> dict | None:
+    """网格线检测失败时（扫描件轻微倾斜/表格线太淡），用表头文字位置 + 行聚类构造列/行边界。"""
+    header_candidates: list[dict] = []
+    for line in lines:
+        field = _match_field(line.get("text") or "", DETAIL_FIELDS)
+        if field:
+            header_candidates.append(line)
+    if len(header_candidates) < 3:
+        return None
+    clusters = _cluster_lines_by_y(header_candidates, tolerance=14.0)
+    best_cluster = None
+    best_mapping: dict[str, dict] = {}
+    for cluster in clusters:
+        mapping: dict[str, dict] = {}
+        for line in cluster:
+            field = _match_field(line.get("text") or "", DETAIL_FIELDS)
+            if field and field not in mapping:
+                mapping[field] = line
+        if len(mapping) >= 3 and "names" in mapping and len(mapping) > len(best_mapping):
+            best_cluster, best_mapping = cluster, mapping
+    if not best_cluster or "names" not in best_mapping:
+        return None
+    header_top = min(line["bbox"][1] for line in best_cluster)
+    header_bottom = max(line["bbox"][3] for line in best_cluster)
+    ordered = sorted(
+        ((line["bbox"][0] + line["bbox"][2]) / 2.0, field) for field, line in best_mapping.items()
+    )
+    xs = [0.0]
+    for index in range(len(ordered) - 1):
+        xs.append((ordered[index][0] + ordered[index + 1][0]) / 2.0)
+    xs.append(width)
+    data_lines = [
+        line for line in lines
+        if (line["bbox"][1] + line["bbox"][3]) / 2.0 > header_bottom
+    ]
+    row_clusters = _cluster_lines_by_y(data_lines, tolerance=10.0)
+    row_centers = [
+        sum((line["bbox"][1] + line["bbox"][3]) / 2.0 for line in cluster) / len(cluster)
+        for cluster in row_clusters
+    ]
+    ys = [0, max(0, header_top - 2), min(height, header_bottom + 2)]
+    for index in range(len(row_centers) - 1):
+        ys.append((row_centers[index] + row_centers[index + 1]) / 2.0)
+    ys.append(height)
+    ys = sorted({int(round(value)) for value in ys})
+    return {"xs": [int(round(value)) for value in xs], "ys": ys,
+            "width": int(width), "height": int(height)}
+
+
 def extract_detail_no_room(pages: list[tuple[str, dict]]) -> dict:
     """识别"无房间号"的 8 列住宿明细表（机关待遇，不需要酒店流水）。
 
@@ -1137,7 +1186,15 @@ def extract_detail_no_room(pages: list[tuple[str, dict]]) -> dict:
     problems: list[str] = []
     for image_path, ocr in pages:
         lines = list(ocr.get("lines") or [])
+        width = float(ocr.get("width") or 0)
+        height = float(ocr.get("height") or 0)
         grid = detect_grid(image_path)
+        intervals = _intervals(grid["xs"], grid["width"]) if grid else []
+        if not grid or len(intervals) < 5:
+            # 扫描件轻微倾斜/表格线太淡时，网格检测会少列；用表头文字位置兜底
+            synthesized = _synth_grid_from_headers(lines, width, height) if width and height else None
+            if synthesized:
+                grid = synthesized
         sheet = {
             "source": [str(image_path)],
             "rows": [],
@@ -1212,6 +1269,11 @@ def extract_detail_no_room(pages: list[tuple[str, dict]]) -> dict:
             if "end" in column_fields:
                 end_dates = _extract_dates(texts[column_fields["end"]])
                 end = end_dates[0] if end_dates else ""
+            if nights is None and start and end:
+                try:
+                    nights = (_parse_statement_date(end) - _parse_statement_date(start)).days
+                except Exception:
+                    nights = None
             seq_text = _cell_text(cells[column_fields["seq"]]) if "seq" in column_fields else ""
             seq_value = _parse_number(seq_text, integer=True)
             if seq_value is None:
