@@ -380,28 +380,22 @@ def check(data: dict) -> dict:
                     person=name,
                 )
 
-    # ---------- 规则 1：双人间；单住只能是车间主任或当天人数凑不够 ----------
+    # ---------- 规则 1：双人间；正主任可单住；其他人同一天最多 1 间单住 ----------
+    # 用户 2026-11-03 澄清：判断标准不是"当天总人数奇偶"，而是"同一天除主任外是否出现 2 间及以上单人间"。
+    # 只有一间非主任单人间时，说明房间数/人数凑不成对（凑不够），允许；出现两间就可以互相拼房，不允许。
     double_room_failed = False
     single_records: list[dict] = []
     for night in sorted(room_nights):
         headcount = sum(len(segs[0]["names"]) for segs in room_nights[night].values())
+        single_rooms_today: list[tuple[str, str]] = []
         for room, segs in room_nights[night].items():
             occupants = segs[0]["names"]
             if len(occupants) == 1:
                 lone = occupants[0]
                 single_records.append({"date": str(night), "room": room, "person": lone})
                 if lone in directors:
-                    continue  # 车间主任单住，例外
-                if headcount % 2 == 1:
-                    continue  # 当天人数为奇数，必然有一间单住，合理
-                double_room_failed = True
-                err(
-                    "SINGLE_ROOM_NOT_ALLOWED",
-                    f"{night} 房间{room} 只有 {lone} 一人，当天共 {headcount} 人（偶数），不应出现单住",
-                    date=str(night),
-                    room=room,
-                    person=lone,
-                )
+                    continue  # 正主任单住，例外
+                single_rooms_today.append((room, lone))
             elif len(occupants) > capacity:
                 double_room_failed = True
                 err(
@@ -410,6 +404,16 @@ def check(data: dict) -> dict:
                     date=str(night),
                     room=room,
                 )
+        if len(single_rooms_today) >= 2:
+            double_room_failed = True
+            pairs = "、".join(f"{room}房 {person}" for room, person in single_rooms_today)
+            err(
+                "MULTIPLE_SINGLE_ROOMS",
+                f"{night} 除主任外出现 {len(single_rooms_today)} 间单住（{pairs}），"
+                f"当天共 {headcount} 人，至少应有两间拼住",
+                date=str(night),
+                rooms=[room for room, _ in single_rooms_today],
+            )
 
     if single_records:
         note(

@@ -214,9 +214,47 @@ class HardFailureTests(unittest.TestCase):
         data["hotel_statement"]["payment_amounts"] = ["1024", "1024"]
         self.assert_rule(data, "DUPLICATE_ROOM")
 
-    def test_single_room_when_even_headcount(self):
+    def test_single_room_only_one_non_director_allowed(self):
+        """当天 4 人（偶数），但除主任外只有 1 间单住 → 属于凑不够，允许。"""
         data = base_dataset()
-        # 每天 4 人（偶数）：301 两人 + 302 一人 + 303 一人 → 302/303 单住不合法
+        data["detail_sheet"]["rows"] = [
+            {
+                "seq": 1,
+                "room": "301",
+                "names": ["张三", "李四"],
+                "periods": [{"start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"}],
+                "signature": ["张三", "李四"],
+            },
+            {
+                "seq": 2,
+                "room": "302",
+                "names": ["王五"],
+                "periods": [{"start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"}],
+                "signature": ["王五"],
+            },
+            {
+                "seq": 3,
+                "room": "303",
+                "names": ["林七"],
+                "periods": [{"start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"}],
+                "signature": ["林七"],
+            },
+        ]
+        data["detail_sheet"]["subtotal"] = {"nights": 12, "amount": "1536"}
+        data["detail_sheet"]["lowercase_amount"] = "1536.00"
+        data["detail_sheet"]["capital_amount"] = "壹仟伍佰叁拾陆元整"
+        data["hotel_statement"]["rows"] = [
+            {"room": "301", "start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"},
+            {"room": "302", "start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"},
+            {"room": "303", "start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"},
+        ]
+        data["hotel_statement"]["payment_amounts"] = ["1536", "1536"]
+        report = check(data)
+        self.assertEqual(report["status"], "pass", report["errors"])
+
+    def test_two_non_director_single_rooms_fail(self):
+        """同一天除主任外出现 2 间单住 → 可以互相拼房，不允许。"""
+        data = base_dataset()
         data["detail_sheet"]["rows"] = [
             {
                 "seq": 1,
@@ -249,7 +287,7 @@ class HardFailureTests(unittest.TestCase):
             {"room": "303", "start": "10月10日", "end": "10月14日", "nights": 4, "price": "128", "amount": "512"},
         ]
         data["hotel_statement"]["payment_amounts"] = ["1536", "1536"]
-        self.assert_rule(data, "SINGLE_ROOM_NOT_ALLOWED")
+        self.assert_rule(data, "MULTIPLE_SINGLE_ROOMS")
 
     def test_signature_mismatch(self):
         data = base_dataset()
