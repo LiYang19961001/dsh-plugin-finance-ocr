@@ -212,12 +212,20 @@ def check(data: dict) -> dict:
             if page_capital:
                 expected_capital = cn_capital(page_amount)
                 if page_capital != expected_capital:
-                    err(
-                        "TOTAL_CAPITAL",
-                        f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
-                        expected=expected_capital,
-                        actual=page_capital,
-                    )
+                    if len(page_capital) <= len(expected_capital) - 2:
+                        warn(
+                            "TOTAL_CAPITAL_OCR",
+                            f"{label}合计大写「{page_capital}」像是 OCR 识别不完整（应为「{expected_capital}」），请人工核对大写",
+                            expected=expected_capital,
+                            actual=page_capital,
+                        )
+                    else:
+                        err(
+                            "TOTAL_CAPITAL",
+                            f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
+                            expected=expected_capital,
+                            actual=page_capital,
+                        )
             per_sheet_summary.append(
                 {
                     "sheet": page_index,
@@ -385,12 +393,20 @@ def check(data: dict) -> dict:
     if capital:
         expected_capital = cn_capital(total_amount)
         if capital != expected_capital:
-            err(
-                "TOTAL_CAPITAL",
-                f"合计大写「{capital}」与金额 {total_amount} 不符，应为「{expected_capital}」",
-                expected=expected_capital,
-                actual=capital,
-            )
+            if len(capital) <= len(expected_capital) - 2:
+                warn(
+                    "TOTAL_CAPITAL_OCR",
+                    f"合计大写「{capital}」像是 OCR 识别不完整（应为「{expected_capital}」），请人工核对大写",
+                    expected=expected_capital,
+                    actual=capital,
+                )
+            else:
+                err(
+                    "TOTAL_CAPITAL",
+                    f"合计大写「{capital}」与金额 {total_amount} 不符，应为「{expected_capital}」",
+                    expected=expected_capital,
+                    actual=capital,
+                )
 
     # ---------- 规则 4：入住人员 = 签字确认（同组人，顺序不限） ----------
     signature_failed = False

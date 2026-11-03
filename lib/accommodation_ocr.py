@@ -508,6 +508,25 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                 }
             )
 
+        # 大写/小写金额兜底：某些页的"大写/小写"行 OCR 不完整，直接按"全大写汉字/两位小数"从整页找
+        if capital is None:
+            for line in lines:
+                match = CAPITAL_RE.search(_norm(line.get("text") or ""))
+                if match and len(match.group(0)) >= 4:
+                    capital = match.group(0)
+        if lowercase is None:
+            for line in lines:
+                cleaned = _norm(line.get("text") or "").replace(",", "").replace("，", "")
+                match = LOWERCASE_RE.search(cleaned)
+                if not match:
+                    continue
+                try:
+                    value = Decimal(match.group(0))
+                except Exception:
+                    continue
+                if value < Decimal("200000"):
+                    lowercase = _number_text(value)
+
         # 记录边界：以"房间号/序号"所在 y 为锚，相邻锚点中点即分界
         anchor_items = sorted(
             [(info["anchor_y"], info) for info in infos if info["anchor_y"] is not None],
@@ -586,16 +605,32 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
                     if neighbor["room"] and set(neighbor["names"]) == set(slot["names"]):
                         slot["room"] = neighbor["room"]
                         break
+            if not slot["room"] and slot["names"]:
+                # 合并单元格跨多行：按"有共同入住人"补房号（如 203 房连续 3 段都是黄东）
+                for neighbor_index in (index - 1, index + 1):
+                    if not (0 <= neighbor_index < len(slots)):
+                        continue
+                    neighbor = slots[neighbor_index]
+                    if neighbor["room"] and set(neighbor["names"]) & set(slot["names"]):
+                        slot["room"] = neighbor["room"]
+                        break
         for slot in slots:
             for info in sorted(slot["infos"], key=lambda item: item["band_index"]):
                 if not info["starts"] and not info["ends"]:
                     continue
+                price = info["price"]
+                if price is None and info["amount"] and info["nights"]:
+                    try:
+                        price = str(Decimal(str(info["amount"])) / Decimal(str(info["nights"])))
+                        price = price.rstrip("0").rstrip(".") if "." in price else price
+                    except Exception:
+                        price = None
                 slot["periods"].append(
                     {
                         "start": info["starts"][0] if info["starts"] else None,
                         "end": info["ends"][0] if info["ends"] else None,
                         "nights": info["nights"],
-                        "price": info["price"],
+                        "price": price,
                         "amount": info["amount"],
                     }
                 )
@@ -1052,6 +1087,31 @@ def build_dataset(
         key: value for key, value in (policy or {}).items()
         if key not in ("ledger", "roster", "unknown_register")
     }
+
+    # 流水房间号兜底：按（起止日期+天数+金额）与明细匹配；流水房间号与明细不一致且唯一匹配时采用明细房号
+    def _period_key(start, end, nights, amount) -> tuple:
+        def normalize(value) -> str:
+            return re.sub(r"^\d{4}年", "", str(value or ""))
+        return (normalize(start), normalize(end), int(nights or 0), str(amount or ""))
+
+    detail_index: dict[tuple, set] = {}
+    for detail_row in sheet.get("rows") or []:
+        room = str(detail_row.get("room") or "").strip()
+        if not room:
+            continue
+        for period in detail_row.get("periods") or []:
+            key = _period_key(period.get("start"), period.get("end"), period.get("nights"), period.get("amount"))
+            detail_index.setdefault(key, set()).add(room)
+    for statement_row in statement_data.get("rows") or []:
+        key = _period_key(
+            statement_row.get("start"), statement_row.get("end"),
+            statement_row.get("nights"), statement_row.get("amount"),
+        )
+        allowed = detail_index.get(key) or set()
+        current = str(statement_row.get("room") or "").strip()
+        if current not in allowed and len(allowed) == 1:
+            statement_row["room"] = next(iter(allowed))
+
     dataset = {
         "schema_version": SCHEMA,
         "template": sheet.get("title") or "施工住宿费明细表",
