@@ -370,3 +370,14 @@ python.exe lib/cli.py <command> --input <input.json> --output <output.json>
 - `statement_image` 支持逗号分隔多页；`detail_images` 支持 1~3 页。手写签字人工核对后可传
   `signature_verified=true`：签字规则记为已核对（报告里 `SIGNATURE_VERIFIED` 提示），不再进待确认。
 
+## 15. 图片型 PDF 输入（v0.2.13）
+
+- `detail_images` / `statement_image` 除了图片，也接受 `.pdf`（绝对路径，多个用逗号分隔，可与图片混用）。
+- PDF 按 **250 DPI** 逐页渲染为 PNG（RGB），页序即 PDF 页序；渲染缓存目录
+  `%USERPROFILE%\.dsh\finance-ocr\pdf-cache\<文件sha256前12位>-<dpi>\page-001.png`，同一文件不重复渲染。
+- 明细 PDF 的页数就是明细页数，流水 PDF 的页数就是流水页数；用户需说明哪份/哪几页是明细、哪份是流水
+  （或分成两个 PDF 分别传）。
+- 限制与提示：加密 PDF 返回 `PDF_ENCRYPTED`；非图片型（纯文字导出）PDF 版式可能不同，需要样张验证；
+  渲染 DPI 可在 payload 里用 `pdf_dpi` 覆盖（默认 250，扫描件建议 ≥200）。
+- 数据安全：PDF 与渲染出的 PNG 都只在本机，不上传、不进公开仓库。
+

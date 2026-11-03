@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-PLUGIN_VERSION = "0.2.12"
+PLUGIN_VERSION = "0.2.13"
 SCHEMA_EXTRACT = "finance-extract/1"
 SCHEMA_VERIFY = "finance-verify/1"
 HERE = Path(__file__).resolve().parent
@@ -629,34 +629,42 @@ def _load_accommodation_policy(payload: dict) -> dict:
 
 
 def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
-    """一组住宿材料（某住宿地点的 1~3 页明细 + 1~2 页流水）→ 结构化数据 + 落盘路径。"""
-    detail_paths = _split_paths(pair.get("detail_images"))
-    statement_paths = _split_paths(pair.get("statement_image"))
-    if not detail_paths or not statement_paths:
+    """一组住宿材料（某住宿地点的 1~3 页明细 + 1~2 页流水；支持图片或图片型 PDF）→ 结构化数据 + 落盘路径。"""
+    detail_inputs = _split_paths(pair.get("detail_images"))
+    statement_inputs = _split_paths(pair.get("statement_image"))
+    if not detail_inputs or not statement_inputs:
         raise CliError(
             "BAD_INPUT",
-            "每组需要 detail_images（明细图，逗号分隔）和 statement_image（酒店流水图，可多页）",
+            "每组需要 detail_images（明细图/PDF，逗号分隔）和 statement_image（酒店流水图/PDF，可多页）",
         )
-    for path in detail_paths + statement_paths:
+    for path in detail_inputs + statement_inputs:
         if not path.is_absolute():
-            raise CliError("BAD_INPUT", f"图片必须是绝对路径：{path}")
+            raise CliError("BAD_INPUT", f"必须是绝对路径：{path}")
         if not path.is_file():
-            raise CliError("BAD_INPUT", f"图片不存在：{path}")
+            raise CliError("BAD_INPUT", f"文件不存在：{path}")
+
+    pdf_input = import_module("pdf_input")
+    try:
+        pdf_dpi = int(pair.get("pdf_dpi") or 250)
+    except (TypeError, ValueError):
+        raise CliError("BAD_INPUT", "`pdf_dpi` 必须是整数（默认 250）")
+    detail_page_inputs, detail_originals = pdf_input.expand_inputs(detail_inputs, dpi=pdf_dpi)
+    statement_page_inputs, statement_originals = pdf_input.expand_inputs(statement_inputs, dpi=pdf_dpi)
 
     accommodation_ocr = import_module("accommodation_ocr")
     ocr_engine = import_module("ocr_engine")
     detail_pages = []
-    for path in detail_paths[:3]:
+    for path in detail_page_inputs:
         dered = _dered_image(path)
         detail_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
     statement_pages = []
-    for path in statement_paths[:4]:
+    for path in statement_page_inputs:
         dered = _dered_image(path)
         statement_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
     data = accommodation_ocr.build_dataset(detail_pages, statement_pages, policy=policy)
     data["source_images"] = {
-        "detail": [str(path) for path in detail_paths[:3]],
-        "statement": [str(path) for path in statement_paths[:4]],
+        "detail": [str(path) for path in detail_originals],
+        "statement": [str(path) for path in statement_originals],
     }
     save = pair.get("save_dataset")
     if save:
@@ -664,7 +672,7 @@ def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
         if not target.is_absolute():
             raise CliError("BAD_INPUT", "`save_dataset` 必须是绝对路径")
     else:
-        target = WORK_ROOT / f"accommodation-dataset-{sha256_file(statement_paths[0])[:8]}.json"
+        target = WORK_ROOT / f"accommodation-dataset-{sha256_file(statement_originals[0])[:8]}.json"
     atomic_write_json(target, data)
     return data, target
 
@@ -833,25 +841,32 @@ def _source_label(dataset: dict) -> str:
 
 
 def _extract_detail_only(payload: dict, policy: dict) -> dict:
-    """机关待遇模式：逐页识别无房间号的明细表，组装成 detail_only 数据集。"""
+    """机关待遇模式：逐页识别无房间号的明细表（支持图片或图片型 PDF），组装成 detail_only 数据集。"""
     accommodation_ocr = import_module("accommodation_ocr")
     ocr_engine = import_module("ocr_engine")
-    images = [Path(item) for item in _split_paths(payload.get("detail_images"))]
-    if not images:
+    pdf_input = import_module("pdf_input")
+    inputs = [Path(item) for item in _split_paths(payload.get("detail_images"))]
+    if not inputs:
         raise CliError("BAD_INPUT", "`detail_images` 不能为空")
-    pages = []
-    for image in images:
-        if not image.is_absolute():
+    for path in inputs:
+        if not path.is_absolute():
             raise CliError("BAD_INPUT", "detail_images 必须是绝对路径")
-        if not image.is_file():
-            raise CliError("EXTRACTION_NOT_FOUND", f"明细表图片不存在：{image}")
+        if not path.is_file():
+            raise CliError("EXTRACTION_NOT_FOUND", f"明细表文件不存在：{path}")
+    try:
+        pdf_dpi = int(payload.get("pdf_dpi") or 250)
+    except (TypeError, ValueError):
+        raise CliError("BAD_INPUT", "`pdf_dpi` 必须是整数（默认 250）")
+    page_inputs, originals = pdf_input.expand_inputs(inputs, dpi=pdf_dpi)
+    pages = []
+    for image in page_inputs:
         dered = _dered_image(image)
         pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
     sheets = accommodation_ocr.extract_detail_no_room(pages)
     for sheet in sheets:
-        sheet["source_images"] = [str(path) for path in images]
+        sheet["source_images"] = [str(path) for path in originals]
     dataset = accommodation_ocr.build_detail_only_dataset(sheets, policy)
-    dataset["source_images"] = {"detail": [str(path) for path in images]}
+    dataset["source_images"] = {"detail": [str(path) for path in originals]}
     save_dataset = payload.get("save_dataset")
     if save_dataset:
         target = Path(str(save_dataset)).expanduser()
@@ -1092,6 +1107,7 @@ def cmd_accommodation(payload: dict) -> tuple[dict, int]:
                 "detail_images": payload.get("detail_images"),
                 "statement_image": payload.get("statement_image"),
                 "save_dataset": payload.get("save_dataset"),
+                "pdf_dpi": payload.get("pdf_dpi"),
             },
             policy,
         )
@@ -1184,7 +1200,7 @@ def cmd_selftest(payload: dict) -> tuple[dict, int]:
     check("cli_py", (HERE / "cli.py").is_file(), str(HERE / "cli.py"))
     check("contract", (HERE / "CONTRACT.md").is_file(), "lib/CONTRACT.md")
 
-    for module_name in ("finance_core", "xlsx_export", "ocr_engine", "table_extract", "accommodation", "accommodation_ocr", "ledger", "roster"):
+    for module_name in ("finance_core", "xlsx_export", "ocr_engine", "table_extract", "accommodation", "accommodation_ocr", "ledger", "roster", "pdf_input"):
         try:
             importlib.import_module(module_name)
             check(f"module:{module_name}", True, "import ok")
