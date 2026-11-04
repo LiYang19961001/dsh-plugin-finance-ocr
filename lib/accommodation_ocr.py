@@ -111,23 +111,29 @@ def detect_grid(image_path) -> dict | None:
         return None
     height, width = gray.shape
     best = None
-    for threshold in (160, 190, 210, 225):
-        _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
-        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(10, int(height * 0.05))))
-        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
-        col_sums = (vertical > 0).sum(axis=0)
-        xs = [int(x) for x in np.where(col_sums > height * 0.5)[0]]
-        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(10, int(width * 0.08)), 1))
-        horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
-        row_sums = (horizontal > 0).sum(axis=1)
-        ys = [int(y) for y in np.where(row_sums > width * 0.3)[0]]
-        merged_x = _merge_axis(xs)
-        merged_y = _merge_axis(ys)
-        if len(merged_x) >= 4 and len(merged_y) >= 3:
-            candidate = {"xs": merged_x, "ys": merged_y, "width": width, "height": height}
-            if best is None or len(merged_x) + len(merged_y) > best["_score"]:
-                candidate["_score"] = len(merged_x) + len(merged_y)
-                best = candidate
+    try:
+        equalized = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    except Exception:
+        equalized = gray
+    for source in (gray, equalized):
+        for threshold in (120, 140, 160, 180, 190, 200, 210, 225, 240):
+            _, binary = cv2.threshold(source, threshold, 255, cv2.THRESH_BINARY_INV)
+            v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(10, int(height * 0.05))))
+            vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel)
+            col_sums = (vertical > 0).sum(axis=0)
+            xs = [int(x) for x in np.where(col_sums > height * 0.5)[0]]
+            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(10, int(width * 0.08)), 1))
+            horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel)
+            row_sums = (horizontal > 0).sum(axis=1)
+            ys = [int(y) for y in np.where(row_sums > width * 0.3)[0]]
+            merged_x = _merge_axis(xs)
+            merged_y = _merge_axis(ys)
+            if len(merged_x) >= 4 and len(merged_y) >= 3:
+                candidate = {"xs": merged_x, "ys": merged_y, "width": width, "height": height}
+                score = len(merged_x) * 2 + len(merged_y)
+                if best is None or score > best["_score"]:
+                    candidate["_score"] = score
+                    best = candidate
     if best:
         best.pop("_score", None)
     return best
