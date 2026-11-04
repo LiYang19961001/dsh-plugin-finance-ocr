@@ -130,7 +130,7 @@ index.js            Cordis 插件：export name / inject / apply，用 defineToo
 
 ### 已完成
 
-- **插件**：`dsh-plugin-finance-ocr`（当前 0.2.17），已 `install_bundle` 进 desktop profile（`link:` 本地链接，改代码即时生效）。
+- **插件**：`dsh-plugin-finance-ocr`（当前 0.2.18），已 `install_bundle` 进 desktop profile（`link:` 本地链接，改代码即时生效）。
   六个工具已在本会话真实调用通过：
   - `finance_ocr_extract`（图片 → extraction JSON + 落盘缓存）
   - `finance_verify`（校验报告；硬失败即拒）

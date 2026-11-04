@@ -333,9 +333,74 @@ def _clean_department(text: str) -> str | None:
     return cleaned or None
 
 
+def _flat_rows_from_infos(page_infos: list[dict]) -> list[dict]:
+    """把"每个有日期的行带"直接当成一条记录（每个日期段一条），用于合并单元格把锚点分组搞乱时的兜底。
+
+    房号/姓名纵向合并时，缺的行按上一行补（同一合并单元格内人名/房号一致）。
+    """
+    records: list[dict] = []
+    last_room = ""
+    last_names: list[str] = []
+    last_uncertain = False
+    for info in sorted(page_infos, key=lambda item: item.get("band_index", 0)):
+        starts = info.get("starts") or []
+        ends = info.get("ends") or []
+        if not starts and not ends:
+            continue
+        if not info.get("has_data"):
+            continue
+        room = str(info.get("room") or "" or last_room)
+        names = list(info.get("names") or last_names)
+        uncertain = bool(info.get("names_uncertain") or (not info.get("names") and last_uncertain))
+        if not room and not names:
+            continue
+        nights = info.get("nights")
+        if nights is None and starts and ends:
+            try:
+                nights = (
+                    _parse_statement_date(ends[0]) - _parse_statement_date(starts[0])
+                ).days
+            except Exception:
+                nights = None
+        price = info.get("price")
+        amount = info.get("amount")
+        if price is None and amount and nights:
+            try:
+                price = str(Decimal(str(amount)) / Decimal(str(nights)))
+                price = price.rstrip("0").rstrip(".") if "." in price else price
+            except Exception:
+                price = None
+        records.append(
+            {
+                "seq": info.get("seq"),
+                "room": room,
+                "names": names,
+                "names_uncertain": uncertain,
+                "periods": [
+                    {
+                        "start": starts[0] if starts else None,
+                        "end": ends[0] if ends else None,
+                        "nights": nights,
+                        "price": price,
+                        "amount": amount,
+                    }
+                ],
+                "signature": [],
+                "signature_uncertain": bool(info.get("has_signature")),
+            }
+        )
+        if info.get("room"):
+            last_room = str(info["room"])
+        if info.get("names"):
+            last_names = list(info["names"])
+            last_uncertain = bool(info.get("names_uncertain"))
+    return records
+
+
 def extract_detail(pages: list[tuple[str, dict]]) -> dict:
     """明细表（1~2 页）识别。pages: [(image_path, ocr_result), ...]。"""
     all_records: list[dict] = []
+    all_page_infos: list[list[dict]] = []
     subtotal = {}
     lowercase = None
     capital = None
@@ -572,6 +637,7 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
             )
 
         # 大写/小写金额兜底：某些页的"大写/小写"行 OCR 不完整，直接按"全大写汉字/两位小数"从整页找
+        all_page_infos.append(list(infos))
         if capital is None:
             for line in lines:
                 match = CAPITAL_RE.search(_norm(line.get("text") or ""))
@@ -727,6 +793,46 @@ def extract_detail(pages: list[tuple[str, dict]]) -> dict:
             problems.append(f"第{index + 1}条记录（房间{record.get('room') or '?'}）日期段识别不完整")
         record["periods"] = periods
         clean_rows.append(record)
+
+    # 合并单元格把"房间/序号锚点"分组搞乱时（小计与逐行合计对不上），退回"每个日期行带一条记录"的兜底
+    def _sum_field(rows, field):
+        total_nights = 0
+        total_amount = Decimal("0")
+        for row in rows:
+            for period in row.get("periods") or []:
+                total_nights += int(period.get("nights") or 0)
+                if period.get("amount") not in (None, ""):
+                    try:
+                        total_amount += Decimal(str(period.get("amount")))
+                    except Exception:
+                        pass
+        return total_nights, total_amount
+
+    standard_nights, standard_amount = _sum_field(clean_rows, "periods")
+    subtotal_nights = subtotal.get("nights")
+    subtotal_amount = subtotal.get("amount")
+    flat_rows = None
+    if all_page_infos and subtotal_nights:
+        flat_rows = _flat_rows_from_infos(
+            [info for page_infos in all_page_infos for info in page_infos]
+        )
+        flat_nights, flat_amount = _sum_field(flat_rows, "periods")
+        better = False
+        if flat_nights == subtotal_nights and standard_nights != subtotal_nights:
+            better = True
+        elif subtotal_amount not in (None, "") and flat_rows:
+            try:
+                target_amount = Decimal(str(subtotal_amount))
+            except Exception:
+                target_amount = None
+            if target_amount is not None and flat_amount == target_amount and standard_amount != target_amount:
+                better = True
+        if not clean_rows and flat_rows:
+            better = True
+        if better:
+            clean_rows = flat_rows
+            problems = []
+            standard_nights = flat_nights
 
     sheet = {
         "source": [str(page[0]) for page in pages],

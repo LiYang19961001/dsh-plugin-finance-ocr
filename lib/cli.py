@@ -29,9 +29,10 @@ import tempfile
 import time
 import traceback
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
-PLUGIN_VERSION = "0.2.17"
+PLUGIN_VERSION = "0.2.18"
 SCHEMA_EXTRACT = "finance-extract/1"
 SCHEMA_VERIFY = "finance-verify/1"
 HERE = Path(__file__).resolve().parent
@@ -628,6 +629,71 @@ def _load_accommodation_policy(payload: dict) -> dict:
     return policy
 
 
+def _build_accommodation_pages(page_inputs, enhance: bool) -> list[tuple[str, dict]]:
+    """把页面图片转成 (图片路径, OCR 结果) 列表；enhance=True 时先做影像增强。"""
+    ocr_engine = import_module("ocr_engine")
+    image_enhance = import_module("image_enhance") if enhance else None
+    pages = []
+    for path in page_inputs:
+        dered = _dered_image(path)
+        source = image_enhance.enhance_file(dered, WORK_ROOT) if image_enhance else dered
+        pages.append((str(source), ocr_engine.run_ocr(str(source))))
+    return pages
+
+
+def _dataset_quality(data: dict) -> tuple:
+    """质量分：行数、逐行天数/金额与小计是否一致、与小计的接近程度、流水匹配。"""
+    sheet = data.get("detail_sheet") or {}
+    rows = sheet.get("rows") or []
+    periods = sum(len(row.get("periods") or []) for row in rows)
+    total_nights = 0
+    total_amount = Decimal("0")
+    for row in rows:
+        for period in row.get("periods") or []:
+            total_nights += int(period.get("nights") or 0)
+            if period.get("amount") not in (None, ""):
+                try:
+                    total_amount += Decimal(str(period.get("amount")))
+                except Exception:
+                    pass
+    subtotal = sheet.get("subtotal") or {}
+    nights_target = None
+    amount_target = None
+    try:
+        if subtotal.get("nights") not in (None, ""):
+            nights_target = int(subtotal["nights"])
+        if subtotal.get("amount") not in (None, ""):
+            amount_target = Decimal(str(subtotal["amount"]))
+    except Exception:
+        nights_target = None
+        amount_target = None
+    nights_ok = nights_target is not None and total_nights == nights_target
+    amount_ok = amount_target is not None and total_amount == amount_target
+    nights_diff = abs(total_nights - nights_target) if nights_target is not None else 10 ** 6
+    amount_diff = (
+        int(abs(total_amount - amount_target) * 100) if amount_target is not None else 10 ** 9
+    )
+    statement = data.get("hotel_statement") or {}
+    statement_rows = statement.get("rows") or []
+    statement_total = Decimal("0")
+    for row in statement_rows:
+        if row.get("amount") not in (None, ""):
+            try:
+                statement_total += Decimal(str(row["amount"]))
+            except Exception:
+                pass
+    statement_ok = bool(statement_rows) and statement_total == total_amount
+    return (
+        1 if rows else 0,
+        1 if nights_ok else 0,
+        1 if amount_ok else 0,
+        -nights_diff,
+        -amount_diff,
+        periods,
+        1 if statement_ok else 0,
+    )
+
+
 def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
     """一组住宿材料（某住宿地点的 1~3 页明细 + 1~2 页流水；支持图片或图片型 PDF）→ 结构化数据 + 落盘路径。"""
     detail_inputs = _split_paths(pair.get("detail_images"))
@@ -652,16 +718,16 @@ def _accommodation_extract_pair(pair: dict, policy: dict) -> tuple[dict, Path]:
     statement_page_inputs, statement_originals = pdf_input.expand_inputs(statement_inputs, dpi=pdf_dpi)
 
     accommodation_ocr = import_module("accommodation_ocr")
-    ocr_engine = import_module("ocr_engine")
-    detail_pages = []
-    for path in detail_page_inputs:
-        dered = _dered_image(path)
-        detail_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
-    statement_pages = []
-    for path in statement_page_inputs:
-        dered = _dered_image(path)
-        statement_pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
+    detail_pages = _build_accommodation_pages(detail_page_inputs, enhance=False)
+    statement_pages = _build_accommodation_pages(statement_page_inputs, enhance=False)
     data = accommodation_ocr.build_dataset(detail_pages, statement_pages, policy=policy)
+    # 拍照式扫描件（明暗渐变/浅表格线）自动识别失败时，走"去阴影+增强"重试路径
+    if not _dataset_quality(data)[:3] == (1, 1, 1) or not _dataset_quality(data)[-1]:
+        detail_enhanced = _build_accommodation_pages(detail_page_inputs, enhance=True)
+        statement_enhanced = _build_accommodation_pages(statement_page_inputs, enhance=True)
+        enhanced_data = accommodation_ocr.build_dataset(detail_enhanced, statement_enhanced, policy=policy)
+        if _dataset_quality(enhanced_data) > _dataset_quality(data):
+            data = enhanced_data
     data["source_images"] = {
         "detail": [str(path) for path in detail_originals],
         "statement": [str(path) for path in statement_originals],
@@ -858,11 +924,25 @@ def _extract_detail_only(payload: dict, policy: dict) -> dict:
     except (TypeError, ValueError):
         raise CliError("BAD_INPUT", "`pdf_dpi` 必须是整数（默认 250）")
     page_inputs, originals = pdf_input.expand_inputs(inputs, dpi=pdf_dpi)
-    pages = []
-    for image in page_inputs:
-        dered = _dered_image(image)
-        pages.append((str(dered), ocr_engine.run_ocr(str(dered))))
+    pages = _build_accommodation_pages(page_inputs, enhance=False)
     sheets = accommodation_ocr.extract_detail_no_room(pages)
+
+    def _detail_only_quality(sheet_list) -> tuple:
+        total_rows = sum(len(sheet.get("rows") or []) for sheet in sheet_list)
+        ok = 0
+        for sheet in sheet_list:
+            rows = sheet.get("rows") or []
+            subtotal = sheet.get("subtotal") or {}
+            nights = sum(int(p.get("nights") or 0) for row in rows for p in row.get("periods") or [])
+            if subtotal.get("nights") and nights == int(subtotal["nights"]):
+                ok += 1
+        return (1 if total_rows else 0, ok, total_rows)
+
+    if not _detail_only_quality(sheets)[0] or _detail_only_quality(sheets)[1] < len(sheets):
+        enhanced_pages = _build_accommodation_pages(page_inputs, enhance=True)
+        enhanced_sheets = accommodation_ocr.extract_detail_no_room(enhanced_pages)
+        if _detail_only_quality(enhanced_sheets) > _detail_only_quality(sheets):
+            sheets = enhanced_sheets
     for sheet in sheets:
         sheet["source_images"] = [str(path) for path in originals]
     dataset = accommodation_ocr.build_detail_only_dataset(sheets, policy)
@@ -1200,7 +1280,7 @@ def cmd_selftest(payload: dict) -> tuple[dict, int]:
     check("cli_py", (HERE / "cli.py").is_file(), str(HERE / "cli.py"))
     check("contract", (HERE / "CONTRACT.md").is_file(), "lib/CONTRACT.md")
 
-    for module_name in ("finance_core", "xlsx_export", "ocr_engine", "table_extract", "accommodation", "accommodation_ocr", "ledger", "roster", "pdf_input"):
+    for module_name in ("finance_core", "xlsx_export", "ocr_engine", "table_extract", "accommodation", "accommodation_ocr", "ledger", "roster", "pdf_input", "image_enhance"):
         try:
             importlib.import_module(module_name)
             check(f"module:{module_name}", True, "import ok")

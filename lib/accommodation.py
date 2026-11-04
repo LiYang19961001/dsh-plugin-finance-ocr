@@ -67,12 +67,15 @@ def _capital_ignoring_zero(text: str) -> str:
 
 
 def _capital_ocr_damaged(capital: str, expected: str) -> bool:
-    """大写 OCR 缺字（漏字/截断）判断：剩余字符仍按原顺序出现在正确大写里。"""
+    """大写 OCR 缺字判断：缺的是金额字符（不是只缺末尾"整"）才算 OCR 缺字。"""
     capital = str(capital or "").strip()
     expected = str(expected or "")
     if not capital or not expected:
         return True
-    if capital in expected or expected in capital:
+    if capital in expected:
+        missing = expected.replace(capital, "", 1)
+        return missing.replace("零", "") != "整"
+    if expected in capital:
         return True
     iterator = iter(expected)
     return all(char in iterator for char in capital)
@@ -228,12 +231,23 @@ def check(data: dict) -> dict:
             if page_capital:
                 expected_capital = cn_capital(page_amount)
                 if page_capital != expected_capital:
-                    err(
-                        "TOTAL_CAPITAL",
-                        f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
-                        expected=expected_capital,
-                        actual=page_capital,
-                    )
+                    if _capital_ignoring_zero(page_capital) == _capital_ignoring_zero(expected_capital):
+                        note(
+                            "TOTAL_CAPITAL_STYLE",
+                            f"{label}合计大写「{page_capital}」金额一致但写法不规范（规范为「{expected_capital}」）",
+                        )
+                    elif _capital_ocr_damaged(page_capital, expected_capital):
+                        warn(
+                            "TOTAL_CAPITAL_OCR",
+                            f"{label}合计大写「{page_capital}」像 OCR 缺字（应为「{expected_capital}」），请人工核对大写",
+                        )
+                    else:
+                        err(
+                            "TOTAL_CAPITAL",
+                            f"{label}合计大写「{page_capital}」与金额 {page_amount} 不符，应为「{expected_capital}」",
+                            expected=expected_capital,
+                            actual=page_capital,
+                        )
             per_sheet_summary.append(
                 {
                     "sheet": page_index,
